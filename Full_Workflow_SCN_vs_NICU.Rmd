@@ -331,16 +331,22 @@ apply(taxa, 2, function(col)sum(is.na(col))/length(col)) * 100
 ## About.
 Creating a [phyloseq](https://journals.plos.org/plosone/article?id=10.1371/journal.pone.0061217) object to be used for analysis, and create different objects to be used for different types of analysis downstream.
 
-## Packages for reading in and wrangling metadata
-```{r}
-sapply(c( "tidyverse","plyr", "dplyr", "janitor", "stringi"), 
+## Load required packages. 
+
+```{r, warning=F, message=F, results='hide'}
+sapply(c("caret", "pls", "e1071", "ggplot2", 
+    "randomForest", "tidyverse", "ggrepel", "nlme", "devtools", 
+    "reshape2", "PMA", "structSSI", "ade4","ggnetwork", 
+    "intergraph", "scales", "readxl", "genefilter", "impute", 
+    "phyloseq", "phangorn", "dada2", "DECIPHER", "gridExtra", "stringi", "janitor",), 
     require, character.only = TRUE)
 ```
 
-## Import metadata and construct dataframe.
+## Import metadata.
+
 ```{r}
 Metadata <- readxl::read_excel("Data/New_metadata.xlsx") %>% 
-  select(-c(1, 4, 19, 22)) %>% 
+  select(-c(3, 18, 21)) %>% 
   add_column("Primary_Group" = "SCN", "Type" = "Discharge") %>% 
   rbind(
     readxl::read_excel("Data/Old_metadata.xlsx") %>% 
@@ -350,15 +356,28 @@ Metadata <- readxl::read_excel("Data/New_metadata.xlsx") %>%
     ) 
 ```
 
-## Load required packages. 
+## Constuct a phylogenetic tree (for Phyloseq object downstream, required for distance measures).
+ - Peform multiple-allignment.
+ - `pml` calculates the likelihood of a given tree, and then `optim.pml()` optimizes the tree topology and branch length for the selected model (GTR+G+I max tree).
 
 ```{r, warning=F, message=F, results='hide'}
-sapply(c("caret", "pls", "e1071", "ggplot2", 
-    "randomForest", "dplyr", "ggrepel", "nlme", "devtools", 
-    "reshape2", "PMA", "structSSI", "ade4","ggnetwork", 
-    "intergraph", "scales", "readxl", "genefilter", "impute", 
-    "phyloseq", "phangorn", "dada2", "DECIPHER", "gridExtra"), 
-    require, character.only = TRUE)
+seqs <- getSequences(seqtab.microdecon)
+
+names(seqs) <- seqs 
+
+alignment <- AlignSeqs(DNAStringSet(seqs), anchor=NA, verbose=FALSE)
+
+phangAlign <- phyDat(as(alignment, "matrix"), type = "DNA")
+
+fitGTR <- phangAlign %>%
+  dist.ml() %>%
+  NJ() %>%
+  pml(data = phangAlign) %>%
+  update(k = 4, inv = 0.2) %>%
+  optim.pml(model = "GTR", optInv = TRUE, optGamma = TRUE, 
+  rearrangement = "NNI", control = pml.control(trace = 0))
+
+detach("package:phangorn", unload = TRUE) # conflicts downstream
 ```
 
 ## Constrcut the Phyloseq object.
@@ -367,7 +386,8 @@ sapply(c("caret", "pls", "e1071", "ggplot2",
 ```{r, warning=F, message=F, results='hide'}
 ps <- phyloseq(otu_table(seqtab.microdecon, taxa_are_rows=FALSE), 
                sample_data(Metadata), 
-               tax_table(taxa))
+               tax_table(taxa),
+               phy_tree(fitGTR$tree))
 ```
 
 ## Wrangling the metadata.
@@ -382,6 +402,12 @@ sample_data(ps) <- sample_data(ps) %>%
   mutate("Sample" = ID) %>% # need to redo the rownames to save it back into the original ps object
   mutate(Sample = paste0("AM", Sample)) %>% 
   column_to_rownames("Sample") 
+```
+
+### Subset phyloseq object for data to be analyzed.
+
+```{r, warning=F, message=F, results='hide'}
+ps <- subset_samples(ps, Type == "Discharge")
 ```
 
 ## Filtering and normalisation.
@@ -459,6 +485,18 @@ prevdf %>%
 ps3 = tax_glom(ps2, "Genus", NArm = TRUE)
 ```
 
+ - Create tree plots to observe pre and post agglomeration.
+ 
+```{r, warning=F, message=F, fig.cap="Tree plots exploring the agglomeration of taxa at the genus level."}
+grid.arrange(nrow = 1, 
+    (plot_tree(ps2, method = "treeonly",
+      ladderize = "left", title = "Before Agglomeration") +
+      theme(plot.title = element_text(size = 15))), 
+    (plot_tree(ps3, method = "treeonly",
+      ladderize = "left", title = "Post Genus Agglomeration") +
+      theme(plot.title = element_text(size = 15))))
+```
+
 ### Normalisation.
  - Plot a refraction curve to see if total sum scaling will surfice.
  - Define colours and lines.
@@ -473,12 +511,6 @@ vegan::rarecurve(t(otu_table(ps3)), step = 20, label = FALSE, main = "Rarefactio
  
 ```{r, warning=F, message=F}
 ps4 <- transform_sample_counts(ps3, function(x) x / sum(x))
-```
-
-### Subset phyloseq object for data to be analyzed.
-
-```{r, warning=F, message=F, results='hide'}
-ps4.microbiome <- subset_samples(ps4, Type == "Microbiome")
 ```
 
  - Explore normalisation with violin plots.
@@ -504,6 +536,15 @@ grid.arrange(nrow = 2, (plot_abundance(ps3, Title = "Abundance", Color = "Type")
              plot_abundance(ps4, Title = "Relative Abundance", Color = "Type"))
 ```
 
+ - Explore normalisation with tree plots.
+ 
+```{r, warning=F, message=F, fig.cap="Tree plot exploring the normalised distribution of taxa between admission and discharge samples."}
+plot_tree(ps4.NICU_no_na, size = "Abundance", color = "Type", 
+    justify = "yes please", ladderize = "left") +
+    labs(title = "Phylogenetic Tree and Relative Abundance") +
+    scale_size_continuous(range = c(.5, 3))
+```
+
 # Data Exploration and Univariate Analysis.
 
 ## About.
@@ -525,8 +566,8 @@ sapply(c("BiocManager", "ggplot2", "ggforce", "vegan", "knitr", "dplyr",
  - Subset transformed data (relative abundance) to only the top20 taxa.
  
 ```{r, warning=F, message=F, fig.cap="Bar plots of the taxonomic distribution (relative abundance) at phylum and genus levels.", results='hide'}
-top20 <- names(sort(taxa_sums(ps4.microbiome), decreasing=TRUE))[1:20]
-ps.top20 <- prune_taxa(top20, ps4.microbiome)
+top20 <- names(sort(taxa_sums(ps4), decreasing=TRUE))[1:20]
+ps.top20 <- prune_taxa(top20, ps4)
 
 plot_bar_auto <- function(ps, taxonomy){
 plot_bar(ps, fill = taxonomy) + 
@@ -571,39 +612,42 @@ samples_with_taxa(ps4.microbiome, "Genus", "Bifidobacterium")
  - We calculate the distances using pruned, transformed and non-agglomerated data.
 
 ```{r, warning=F, message=F}
-ps2.Microbiome <- subset_samples(ps2, Type == "Microbiome") %>%
+ps2.TSS <- ps2 %>%
         transform_sample_counts(function(x) x / sum(x))
 ```
  
  - We can then create distance matrices and plots for this data subset using several methods:
-  - bray-curtis or weighted unifrac distances with principle coordinate analysis (PCoA).
-    - weighted-unifrac: phylogeny.
-    - bray-curtis: abundance and phylogeny.
+ - e.g. bray-curtis or weighted unifrac distances with PCoA, NMDS, etc.
  - Ordinate using PCoA and Weighted-Unifrac/Bray-Curtis.
  - Extract eigenvalues from ordination.
  - Plot ordination using eigenvalues and colour by variable *Date*.
-    
-### PCoA and Bray-Curtis.
 
-```{r, fig.cap="PCoA plot of Bray-Curtis matrix", warning=F, message=F}
-ps_ordination <- ordinate(ps2.Microbiome, method = "PCoA", distance = "bray")
+```{r, fig.cap="PCoA plot of Bray-Curtis distances coloured by date.", warning=F, message=F}
+ordination_plots <- function(filtered_ps, variable, vis_method, dist_method){
+  
+# ordinate
+ps_ordination <- ordinate(filtered_ps, method = "PCoA", distance = "bray")
 
+# get eignenvalues
 evals <- ps_ordination$values$Eigenvalues
 
-plot_ordination(ps2.Microbiome, ps_ordination, color = "Date", 
+# generate plot
+plot_ordination(filtered_ps, ps_ordination, color = variable, 
   title = "PCoA (Bray-Curtis)") +
-  labs(col = "Date") +
+  labs(col = variable) +
   coord_fixed(sqrt(evals[2] / evals[1])) +
   geom_point(size = 2) 
 
-rm(list = c("ps_ordination", "evals"))
+ }
+
+ordination_plots(ps2.Microbiome, "Primary_Group", "PCoA", "bray")
 ```
 
  - Export plot.
  
 ```{r, eval=F}
 ggsave("PCoA_Bray.png", 
-  plot = (plot_ordination(ps2.Microbiome, ps_ordination, 
+  plot = (plot_ordination(ps2.TSS, ps_ordination, 
   color = "Type", title = "PCoA (Weighted-Unifrac)") +
   labs(col = "Type") +
   coord_fixed(sqrt(evals[2] / evals[1])) +
@@ -625,11 +669,11 @@ ggsave("PCoA_Bray.png",
   - `betadisper()` gives a measure of the dispersion within groups. Thus, if the PERMANOVA test is significant and the permdisp is not, the significant result in your communities is due to a mean shift in community composition and not from increased variance within groups.
  
 ```{r, warning=F, message=F}
-permanova_func <- function(ps2.Microbiome){
+permanova_func <- function(ps2.TSS){
   
 # permanova
-ps_otu <- data.frame(otu_table(ps2.Microbiome))
-ps_metadata <- data.frame(sample_data(ps2.Microbiome))
+ps_otu <- data.frame(otu_table(ps2.TSS))
+ps_metadata <- data.frame(sample_data(ps2.TSS))
 permanova <- adonis(ps_otu ~Date, data = ps_metadata, method = "bray") 
 permanova <- tableGrob(as.data.frame(permanova$aov.tab)) %>% 
   annotate_figure(fig.lab = "PERMANOVA", fig.lab.face = "bold", fig.lab.size = 15)
@@ -645,33 +689,32 @@ grid.arrange(permanova, homogeneity, ncol = 1)
 
 }
 
-permanova_func(ps2.Microbiome)
+permanova_func(ps2.TSS)
 ```
-
-**Also tried PERMANOVA with ddPCR and paraiste_burden. Both had were significant for PERMANOVA, but only the patsite_burden was non-significant for the homogeneity condition. Additionally, both had very poor R2 scores (<0.01). The p values suggest that the differences in paraiste_burden communities is due to a mean shift in community composition and not from increased variance within groups, but I would argue that the poor R2 makes this unreliable.**
 
  - Export results.
  
 ```{r, eval=F}
-tab_df((permanova_func(ps2.Microbiome)), 
+tab_df((permanova_func(ps2.TSS)), 
        alternate.rows = TRUE, 
        file = "PERMANOVA.doc")
 ```
 
  - Explore the major contributors to the differences.
+ **Still trying to workout how to make line 711 more generic. Until then, you need to alter for each variable.**
 
 ```{r, warning=F, message=F}
-major_contributors <- function(ps2.Microbiome){
+major_contributors <- function(ps2.TSS, variable){
 # perform permanova  
-ps_otu <- data.frame(otu_table(ps2.Microbiome))
-ps_metadata <- data.frame(sample_data(ps2.Microbiome))
-permanova <- adonis(ps_otu ~Date, data = ps_metadata, method = "bray") 
+ps_otu <- data.frame(otu_table(ps2.TSS))
+ps_metadata <- data.frame(sample_data(ps2.TSS))
+permanova <- adonis(ps_otu ~Primary_Group, data = ps_metadata, method = "bray") 
 
 # coefficients
-coef <- coefficients(permanova)["Date1",]
+coef <- coefficients(permanova)[paste0(variable, "1"),]
 top.coef <- coef[rev(order(abs(coef)))[1:20]]
 
-genus_contributors <- tax_table(ps2.Microbiome) %>% 
+genus_contributors <- tax_table(ps2.TSS) %>% 
     unclass() %>% 
     as.data.frame() %>% 
     select("Genus") %>% 
@@ -683,47 +726,16 @@ genus_contributors <- tax_table(ps2.Microbiome) %>%
 return(genus_contributors)
 }
 
-major_contributors(ps2.Microbiome)
+major_contributors(ps2.TSS, "Primary_Group")
 ```
-
-
-**For Parasite Burden**
-```{r}
-major_contributors <- function(ps2.Microbiome){
-# perform permanova  
-ps_otu <- data.frame(otu_table(ps2.Microbiome))
-ps_metadata <- data.frame(sample_data(ps2.Microbiome))
-permanova <- adonis(ps_otu ~parasite_burden, data = ps_metadata, method = "bray") 
-
-# coefficients
-coef <- coefficients(permanova)["parasite_burden1",]
-top.coef <- coef[rev(order(abs(coef)))[1:20]]
-
-genus_contributors <- tax_table(ps2.Microbiome) %>% 
-    unclass() %>% 
-    as.data.frame() %>% 
-    select("Genus") %>% 
-    rownames_to_column(var = "ASV") %>% 
-    right_join((as.data.frame(top.coef) %>%
-    rownames_to_column(var = "ASV"))) %>% 
-    select(!"ASV") 
-
-return(genus_contributors)
-}
-
-major_contributors(ps2.Microbiome) %>% arrange(top.coef)
-```
-
-**It's interesting that the top contributers that we can identify are the taxa that come out as significant when doing DESeq2 analysis on the same variable.**
 
  - Export table.
  
 ```{r, eval=F}
-tab_df(major_contributors(ps2.Microbiome), alternate.rows = TRUE, 
+tab_df(major_contributors(ps2.TSS), alternate.rows = TRUE, 
        title = "Major Contriutors to PERMANOVA differences.", 
        file = "Major_contributors_beta_diversity.doc")
 ```
-
 
 ## Alpha diversity.
  - Create new subset with ps2 non-transformed data (built in normalisation function for Shannon).
@@ -734,10 +746,8 @@ tab_df(major_contributors(ps2.Microbiome), alternate.rows = TRUE,
  
 ```{r, warning=F, message=F}
 calc_alpha_diversity <- function(ps2){
-# subset
-ps2.Microbiome <- subset_samples(ps2, Type == "Microbiome")
 # calculate metrics
-ps_alpha_div <- ps2.Microbiome %>%
+ps_alpha_div <- ps2 %>%
                 estimate_richness(measures = c("Shannon", "Observed", "Chao1")) %>% 
                 select(-se.chao1)
 
@@ -798,7 +808,6 @@ ggplot(aes(x = ddPCR, y = Shannon)) +
   geom_smooth(method = "lm", se = T)
 ```
 
-
  - Export *Diversity_Analysis* results table.
  
 ```{r, eval=F}
@@ -813,9 +822,7 @@ tab_df(diversity_analysis(ps_metadata), alternate.rows = TRUE,
  - use ps2 non-transformed data for alpha.
  
 ```{r, warning=F, message=F, fig.cap="Scatterplot of richness and shannon diversity metrics coloured by ddPCR."}
-ps2.Microbiome <- subset_samples(ps2, Type == "Microbiome")
-
-plot_richness(ps2.Microbiome, measures = c("Shannon", "Observed"), 
+plot_richness(ps2, measures = c("Shannon", "Observed"), 
               color = "ddPCR", title = "") +
     geom_point(size = 3.5, alpha = 0.7) +
     theme(axis.text.x = element_blank(), 
@@ -833,7 +840,7 @@ ggsave("Alpha_Point.png", dpi = 600, height = 5, width = 5)
  - To add a layer with p values use `stat_compare_means(comparisons = list(c("Admission", "Discharge")), method = "wilcox.test")`.
  
 ```{r, warning=F, message=F, fig.cap="Boxplots of richness and shannon diversity metrics coloured by date."}
-plot_richness(ps2.Microbiome, measures = c("Shannon", "Observed"), 
+plot_richness(ps2, measures = c("Shannon", "Observed"), 
               x = "parasite_burden", color = "parasite_burden", title = "") +
               geom_jitter(size = 1, alpha = 0.7) +
               geom_boxplot() +
@@ -866,69 +873,21 @@ sapply(c("DESeq2", "phyloseq", "dplyr", "ggplot2", "grid",
 ### Explore clustering of variables with PCoA and Bray-Curtis.
 
 ```{r, fig.cap="PCoA plot of Bray-Curtis distances coloured by date.", warning=F, message=F}
-ordination_plots <- function(filtered_ps, variable){
-  
-# ordinate
-ps_ordination <- ordinate(filtered_ps, method = "PCoA", distance = "bray")
-
-# get eignenvalues
-evals <- ps_ordination$values$Eigenvalues
-
-# generate plot
-plot_ordination(filtered_ps, ps_ordination, color = variable, 
-  title = "PCoA (Bray-Curtis)") +
-  labs(col = variable) +
-  coord_fixed(sqrt(evals[2] / evals[1])) +
-  geom_point(size = 2) 
-
- }
-
-ordination_plots(ps2.Microbiome, "Date")
+ordination_plots(ps2.Microbiome, "Primary_Group", "PCoA", "bray")
 ```
 
-```{r, fig.cap="PCoA plot of Bray-Curtis distances coloured by rain (mm).", warning=F, message=F}
-ordination_plots(ps2.Microbiome, "RainGauge_mm")
-```
-
-```{r, fig.cap="PCoA plot of Bray-Curtis distances coloured by temperature (C).", warning=F, message=F}
-ordination_plots(ps2.Microbiome, "Temperature_C")
-```
- 
-```{r, fig.cap="PCoA plot of Bray-Curtis distances coloured by prasite burden.", warning=F, message=F}
-ordination_plots(ps2.Microbiome, "parasite_burden")
-```
-
-
-```{r, fig.cap="PCoA plot of Bray-Curtis distances coloured by ddPCR.", warning=F, message=F}
-ordination_plots(ps2.Microbiome, "ddPCR")
-```
-
-```{r, fig.cap="PCoA plot of Bray-Curtis distances coloured by pH.", warning=F, message=F}
-ordination_plots(ps2.Microbiome, "pH")
-```
-
+#### For multiple plots.
 
 ```{r, eval=F}
-grid.arrange(ordination_plots(ps2.Microbiome, "Date"), 
-             ordination_plots(ps2.Microbiome, "RainGauge_mm"), 
-             ordination_plots(ps2.Microbiome, "Temperature_C"), 
-             ordination_plots(ps2.Microbiome, "parasite_burden"),
-             ordination_plots(ps2.Microbiome, "ddPCR"),
-             ordination_plots(ps2.Microbiome, "pH"),ncol=2)
+grid.arrange(ordination_plots(ps2.Microbiome, "Primary_Group", "PCoA", "bray"), 
+             ordination_plots(ps2.Microbiome, "Feeding_Type", "PCoA", "bray")
+             ,ncol=2)
 ```
 
- - **Date** seems to represent the clustering really well.
- - High **Rain** fall looks like it it causes the big shift from the 9th of June.
- - Maybe a relationship between rain/tamp and the parasite.
- - **No** other variables appear to contribute to clustering.
-
+########################################################################################
 ### Subset data for modelling.
 
  - Subset to filtered/agglomerated data and scale continuous variables.
- 
-```{r, warning=F, message=F}
-ps3.Microbiome <- subset_samples(ps3, Type == "Microbiome")
-```
 
 #### Testing for multicollinearity.
  - Define the `corvif()`function that takes metadata and creates a linear model to see if any collinearity exists between variables.
@@ -1120,7 +1079,7 @@ phyloseq_to_deseq2(ps3.Microbiome, ~ parasite_burden) %>%
 
 
 **Try with species**
- - Create a phyloseq object to ps2 (pre-agglomeration), convert to ps2.microbiome and run the same analysis as above.
+ - Create a phyloseq object to ps2 (pre-agglomeration), convert to ps2.TSS and run the same analysis as above.
 ```{r, eval=F}
 ps.species <- phyloseq(otu_table(seqtab.microdecon, taxa_are_rows=FALSE), 
                sample_data(Metadata), 
