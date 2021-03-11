@@ -1,15 +1,24 @@
 ---
 title: "Full_Workflow"
-output: pdf_document
+author: "Jacob Westaway"
+date: "Last updated on `r Sys.Date()`"
+output: 
+  pdf_document: 
+    toc: true
+    toc_depth: 2
+    number_sections: true
+header-includes:
+  \usepackage{float}
+  \floatplacement{figure}{H}
 ---
 
 ```{r setup, include=FALSE}
-knitr::opts_chunk$set(echo = TRUE)
+knitr::opts_chunk$set(echo=T, eval=F)
 ```
 
 # About.
 
-This document contains the workflow for the manuscript *BLANK_BLANK*, and is based on the workflow from the paper (Characterising the bacterial gut microbiome of probiotic-supplmented very-preterm infants)[https://github.com/JacobAFW/NICU_Microbiome_Study/blob/main/Complete_Workflow_NICU_Microbiome.pdf],and includes the bioinformatics pipeline to go from raw reads to interpretable abundances, based largely around this [DADA2](https://pubmed.ncbi.nlm.nih.gov/27508062/) workflow developed by *Callahan, et al.*, with removal of contamination with [MicroDecon](https://onlinelibrary.wiley.com/doi/full/10.1002/edn3.11), and the analysis using a combination of the packages [phyloseq](https://journals.plos.org/plosone/article?id=10.1371/journal.pone.0061217), [DESeq2](https://genomebiology.biomedcentral.com/articles/10.1186/s13059-014-0550-8), [lme4](https://cran.r-project.org/web/packages/lme4/vignettes/lmer.pdf) and more.
+This document contains the workflow for the manuscript *BLANK_BLANK*, and is based on the workflow from the paper[Characterising the bacterial gut microbiome of probiotic-supplmented very-preterm infants](https://github.com/JacobAFW/NICU_Microbiome_Study/blob/main/Complete_Workflow_NICU_Microbiome.pdf),and includes the bioinformatics pipeline to go from raw reads to interpretable abundances, based largely around this [DADA2](https://pubmed.ncbi.nlm.nih.gov/27508062/) workflow developed by *Callahan, et al.*, with removal of contamination with [MicroDecon](https://onlinelibrary.wiley.com/doi/full/10.1002/edn3.11), and the analysis using a combination of the packages [phyloseq](https://journals.plos.org/plosone/article?id=10.1371/journal.pone.0061217), [DESeq2](https://genomebiology.biomedcentral.com/articles/10.1186/s13059-014-0550-8), [lme4](https://cran.r-project.org/web/packages/lme4/vignettes/lmer.pdf) and more.
 
 # Bioinformatics Pipeline.
 
