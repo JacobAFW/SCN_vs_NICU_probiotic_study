@@ -338,7 +338,7 @@ sapply(c("caret", "pls", "e1071", "ggplot2",
     "randomForest", "tidyverse", "ggrepel", "nlme", "devtools", 
     "reshape2", "PMA", "structSSI", "ade4","ggnetwork", 
     "intergraph", "scales", "readxl", "genefilter", "impute", 
-    "phyloseq", "phangorn", "dada2", "DECIPHER", "gridExtra", "stringi", "janitor",), 
+    "phyloseq", "phangorn", "dada2", "DECIPHER", "gridExtra", "stringi", "janitor"), 
     require, character.only = TRUE)
 ```
 
@@ -352,8 +352,7 @@ Metadata <- readxl::read_excel("Data/New_metadata.xlsx") %>%
     readxl::read_excel("Data/Old_metadata.xlsx") %>% 
       separate(DOB, into = c("DOB", "Time"), sep = "\\s") %>% 
       mutate(DOB = as.Date(DOB)) %>% 
-      select(1, 3:4, 9, 17:18, 20:35)
-    ) 
+      select(1, 3:4, 9, 17:18, 20:35)) 
 ```
 
 ## Constuct a phylogenetic tree (for Phyloseq object downstream, required for distance measures).
@@ -361,7 +360,9 @@ Metadata <- readxl::read_excel("Data/New_metadata.xlsx") %>%
  - `pml` calculates the likelihood of a given tree, and then `optim.pml()` optimizes the tree topology and branch length for the selected model (GTR+G+I max tree).
 
 ```{r, warning=F, message=F, results='hide'}
-seqs <- getSequences(seqtab.microdecon)
+build_tree <- function(ASV_table){
+  
+seqs <- getSequences(ASV_table)
 
 names(seqs) <- seqs 
 
@@ -378,6 +379,11 @@ fitGTR <- phangAlign %>%
   rearrangement = "NNI", control = pml.control(trace = 0))
 
 detach("package:phangorn", unload = TRUE) # conflicts downstream
+
+return(fitGTR)
+}
+
+fitGTR <- build_tree(seqtab.microdecon)
 ```
 
 ## Constrcut the Phyloseq object.
@@ -394,18 +400,19 @@ ps <- phyloseq(otu_table(seqtab.microdecon, taxa_are_rows=FALSE),
  - And do some additional wrangling.
  - Convert chraracters to factors.
 
+**Change `ID`.**
 ```{r, warning=F, message=F, results='hide'}
 sample_data(ps) <- sample_data(ps) %>%
   unclass() %>%
   as.data.frame() %>%
   mutate_if(is.character, as.factor) %>%
   mutate("Sample" = ID) %>% # need to redo the rownames to save it back into the original ps object
-  mutate(Sample = paste0("AM", Sample)) %>% 
   column_to_rownames("Sample") 
 ```
 
 ### Subset phyloseq object for data to be analyzed.
 
+**Change `Type` and `Discharge`.**
 ```{r, warning=F, message=F, results='hide'}
 ps <- subset_samples(ps, Type == "Discharge")
 ```
@@ -420,7 +427,8 @@ ps <- subset_samples(ps, Type == "Discharge")
 ps1 <- subset_taxa(ps, !is.na(Phylum) & !Phylum %in% c("", "uncharacterized"))
 ```
 
-#### Check percentages of NA values left
+#### Check percentages of NA values left.
+
 ```{r}
 sum(is.na(tax_table(ps1)))/prod(dim(tax_table(ps1))) * 100
 
@@ -516,28 +524,29 @@ ps4 <- transform_sample_counts(ps3, function(x) x / sum(x))
  - Explore normalisation with violin plots.
  - Compares differences in scale and distribution of the abundance values before and after transformation.
  - Using arbitrary subset, based on Phylum = Firmicutes, for plotting (ie. can explore any taxa to observe transformation).
- 
+
+**Change `Firmicutes`.**
 ```{r, warning=F, message=F, fig.cap="Violin plots exploring of distribution of abundance in Firmicutes before and after normalisation of data."}
-plot_abundance = function(physeq, Title = "Abundance", Facet = "Order", Color = "Phylum"){
+plot_abundance = function(physeq, Title = "Abundance", Facet = "Order", Color = "Phylum", variable = "Type"){
     subset_taxa(physeq, Phylum %in% c("Firmicutes")) %>%
     psmelt() %>%
     subset(Abundance > 0) %>%
-    ggplot(mapping = aes_string(x = "Type", y = "Abundance", color = Color, fill = Color)) +
+    ggplot(mapping = aes_string(x = variable, y = "Abundance", color = Color, fill = Color)) +
       geom_violin(fill = NA) +
       geom_point(size = 1, alpha = 0.3, position = position_jitter(width = 0.3)) +
       facet_wrap(facets = Facet) + 
       scale_y_log10()+
-      scale_x_discrete() +
       theme(legend.position="none") +
       labs(title = Title)
 }
 
-grid.arrange(nrow = 2, (plot_abundance(ps3, Title = "Abundance", Color = "Type")),
-             plot_abundance(ps4, Title = "Relative Abundance", Color = "Type"))
+grid.arrange(nrow = 2, (plot_abundance(ps3, Title = "Abundance", Color = "Type", variable = "Type")),
+             plot_abundance(ps4, Title = "Relative Abundance", Color = "Type", variable = "Type"))
 ```
 
  - Explore normalisation with tree plots.
- 
+
+**Change `Type`.**
 ```{r, warning=F, message=F, fig.cap="Tree plot exploring the normalised distribution of taxa between admission and discharge samples."}
 plot_tree(ps4.NICU_no_na, size = "Abundance", color = "Type", 
     justify = "yes please", ladderize = "left") +
@@ -565,8 +574,7 @@ sapply(c("BiocManager", "ggplot2", "ggforce", "vegan", "knitr", "dplyr",
  - Use `plot_bar_auto()` function wrapped around phyloseq's `plot_bar()` to explore the distribution of taxa at the genus and phylum levels.
  - Subset transformed data (relative abundance) to only the top20 taxa.
  
-**NEEDS WORK TO MAKE GENERIC**
-
+**Change `Primary_Group`.**
 ```{r, warning=F, message=F, fig.cap="Bar plots of the taxonomic distribution (relative abundance) at phylum and genus levels.", results='hide'}
 top20 <- names(sort(taxa_sums(ps4), decreasing=TRUE))[1:20]
 ps.top20 <- prune_taxa(top20, ps4)
@@ -666,8 +674,7 @@ ggsave("PCoA_Bray.png",
   - If you get a significant PERMANOVA you'll want to distinguish between the three options by checking the homogeneity condition using `permdisp()`. If you get a non-significant result the first option above is correct.
   - `betadisper()` gives a measure of the dispersion within groups. Thus, if the PERMANOVA test is significant and the permdisp is not, the significant result in your communities is due to a mean shift in community composition and not from increased variance within groups.
   
-**NEEDS WORK TO MAKE GENERIC**
- 
+**Change `Primary_Group`.**
 ```{r, warning=F, message=F}
 permanova_func <- function(ps2.TSS){
   
@@ -701,8 +708,8 @@ tab_df((permanova_func(ps2.TSS)),
 ```
 
  - Explore the major contributors to the differences.
- **NEEDS WORK TO MAKE GENERIC** 711 more generic. Until then, you need to alter for each variable.
 
+**Change `Primary_Group`.**
 ```{r, warning=F, message=F}
 major_contributors <- function(ps2.TSS, variable){
 # perform permanova  
@@ -739,7 +746,8 @@ tab_df(major_contributors(ps2.TSS), alternate.rows = TRUE,
 
 ## Alpha diversity.
  - Define a function that calculates Shannon Index, Obsverved (richness) & Chao1 diversity, and binds it to our original metadata dataframe, which can then be used for analysis.
- 
+
+**Change `ID`.**
 ```{r, warning=F, message=F}
 calc_alpha_diversity <- function(ps2){
 # calculate metrics
@@ -776,11 +784,9 @@ shapiro.test(ps_metadata$Shannon)
 ```
  
 ### Statistical test: compare mean/median between groups.
-
-**NEEDS WORK TO MAKE GENERIC** 
-
 - define a function that performs a Wilcoxin test on the three diversity metrics and binds them (Shannon Index, Richness & Chao1).
 
+**Change `Primary_Group`.**
 ```{r, warning=F, message=F}
 diversity_analysis <- function(ps_metadata){
 
@@ -830,10 +836,11 @@ ggsave("Alpha_Point.png", dpi = 600, height = 5, width = 5)
 
  - Use `plot_richness()` to create boxplots of alpha diversity.
  - To add a layer with p values use `stat_compare_means(comparisons = list(c("Admission", "Discharge")), method = "wilcox.test")`.
- 
+
+**Change `Primary_Group`.**
 ```{r, warning=F, message=F, fig.cap="Boxplots of richness and shannon diversity metrics coloured by date."}
 plot_richness(ps2, measures = c("Shannon", "Observed"), 
-              x = "parasite_burden", color = "parasite_burden", title = "") +
+              x = "Primary_Group", color = "Primary_Group", title = "") +
               geom_jitter(size = 1, alpha = 0.7) +
               geom_boxplot() +
               theme(panel.border = element_rect(colour = "grey", fill = NA, size = 1), legend.position = "none", 
@@ -848,6 +855,7 @@ ggsave("Alpha_Box.png", dpi = 600, height = 5, width = 5)
 
  - shannon diversity for continuous variable.
 
+**Change `Gestational_Age_at_Birth`.**
 ```{r}
 ps_metadata %>% 
 ggplot(aes(x = Gestational_Age_at_Birth, y = Shannon)) + 
@@ -881,7 +889,6 @@ deseq_filter <- function(deseq_object){
  - Define a function to extract the results.
  - Extract the results, order by p value, selects significant (<0.05) results, binds this data to the *tax_table* from the *phyloseq* object to get the taxonomic information, and then select and order the desired columns.
 
-Define functions to get results
 ```{r, warning=F, message=F}
 get_deseq_res_lrt <- function(deseq_object){
   res = results(deseq_object)
@@ -912,8 +919,9 @@ get_deseq_res_wald <- function(desq_object, contrast_variable, level1, level2){
  - Use `Deseq()` to perform the normalisation and analysis.
  - Extract the results.
 
-**LRT**
+**Change `Primary_Group`.**
 ```{r, warning=F, message=F}
+# LRT
 phyloseq_to_deseq2(ps3, ~ Primary_Group) %>% 
     calc_geo_means() %>% 
     deseq_filter() %>% 
@@ -922,8 +930,9 @@ phyloseq_to_deseq2(ps3, ~ Primary_Group) %>%
     remove_rownames()
 ```
 
-**Wald**
+**Change `Primary_Group`.**
 ```{r, warning=F, message=F}
+# Wald
 phyloseq_to_deseq2(ps3, ~ Primary_Group) %>% 
     calc_geo_means() %>% 
     deseq_filter() %>% 
@@ -957,30 +966,38 @@ grid.arrange(ordination_plots(ps2, "Primary_Group", "PCoA", "bray"),
              ncol=2)
 ```
 
-### Subset data for modelling.
+### Centre and scale continuous variables.
 
- - Subset to filtered/agglomerated data.
- - centre and scale continuous variables.
- 
- 
- 
- 
- 
- 
- 
- 
- 
- 
- 
- 
- 
- 
- 
- 
- 
- 
+**Change `ID`.**
+```{r, warning=F, message=F}
+centre_and_scale <- function(data){
+# get numeric variables
+data2 <- data %>% 
+  select_if(is.numeric)
+# entering and scaling over variables
+data3 <- sapply(data2, function(x) scale(x, center=T, scale = 2*sd(x))) %>% 
+  as.data.frame() %>% 
+  rownames_to_column("RowID")
+# join scaled/centred data to non-numeric data
+data %>% 
+  select_if(negate(is.numeric)) %>%
+  rownames_to_column("RowID") %>% 
+  left_join(data3, by = "RowID") %>%
+  select(-RowID)
+}
 
-#### Testing for multicollinearity.
+sample_data(ps3) <- sample_data(ps3) %>% 
+  unclass() %>% 
+  as.data.frame() %>% 
+  centre_and_scale() %>%   
+  mutate("Sample" = ID) %>% # need to redo the rownames to save it back into the original ps object
+  column_to_rownames("Sample") 
+```
+
+
+
+###############################################################
+### Test for multicollinearity.
  - Define the `corvif()`function that takes metadata and creates a linear model to see if any collinearity exists between variables.
  - Then use this function on a defined a vector with all the variables to be included in the model.
  - If GVIF < 3 = no collinearity.
@@ -1277,66 +1294,73 @@ sample_data(ps3) <- sample_data(ps3) %>%
 ```
 
 #### Testing for multicollinearity.
+
  - Define the `corvif()`function that takes metadata and creates a linear model to see if any collinearity exists between variables.
+
+```{r}
+# myvif
+myvif <- function(mod) {
+  v <- vcov(mod)
+  assign <- attributes(model.matrix(mod))$assign
+  if (names(coefficients(mod)[1]) == "(Intercept)") {
+    v <- v[-1, -1]
+    assign <- assign[-1]
+  } else warning("No intercept: vifs may not be sensible.")
+  terms <- labels(terms(mod))
+  n.terms <- length(terms)
+  if (n.terms < 2) stop("The model contains fewer than 2 terms")
+  if (length(assign) > dim(v)[1] ) {
+    diag(tmp_cor)<-0
+    if (any(tmp_cor==1.0)){
+      return("Sample size is too small, 100% collinearity is present")
+    } else {
+      return("Sample size is too small")
+    }
+  }
+  R <- cov2cor(v)
+  detR <- det(R)
+  result <- matrix(0, n.terms, 3)
+  rownames(result) <- terms
+  colnames(result) <- c("GVIF", "Df", "GVIF^(1/2Df)")
+  for (term in 1:n.terms) {
+    subs <- which(assign == term)
+    result[term, 1] <- det(as.matrix(R[subs, subs])) * det(as.matrix(R[-subs, -subs])) / detR
+    result[term, 2] <- length(subs)
+  }
+  if (all(result[, 2] == 1)) {
+    result <- data.frame(GVIF=result[, 1])
+  } else {
+    result[, 3] <- result[, 1]^(1/(2 * result[, 2]))
+  }
+  invisible(result)
+}
+
+# corvif
+corvif <- function(data) {
+  data <- as.data.frame(data)
+
+  form    <- formula(paste("fooy ~ ",paste(strsplit(names(data)," "),collapse = " + ")))
+  data  <- data.frame(fooy = 1 + rnorm(nrow(data)) ,data)
+  lm_mod  <- lm(form,data) # runs linear model with above formula and metadata
+  
+  cat("\n\nVariance inflation factors\n\n")
+  print(myvif(lm_mod))
+}
+```
+
  - Then use this function on a defined a vector with all the variables to be included in the model.
  - If GVIF < 3 = no collinearity.
  
 ```{r, eval=F}
-# Get scaled data for colinearity 
-cor_met <- sample_data(ps3) %>% unclass %>% as.data.frame()
-
-##### Model with ddPCR
-corvif(cbind(cor_met$Temperature_C, cor_met$pH, cor_met$RDO_Conc_mgL, cor_met$ORP_mV, cor_met$RainGauge_mm, cor_met$Salinity_PSU, cor_met$ddPCR))
-
-# rain
-corvif(cbind(cor_met$ORP_mV, cor_met$RainGauge_mm, cor_met$Salinity_PSU, cor_met$ddPCR))
-
-corvif(cbind(cor_met$RDO_Conc_mgL, cor_met$ORP_mV, cor_met$RainGauge_mm, cor_met$Salinity_PSU, cor_met$ddPCR))
-
-# temp
-corvif(cbind(cor_met$Temperature_C, cor_met$pH, cor_met$ORP_mV, cor_met$Salinity_PSU, cor_met$ddPCR))
-
-corvif(cbind(cor_met$Temperature_C, cor_met$RDO_Conc_mgL, cor_met$ORP_mV, cor_met$Salinity_PSU, cor_met$ddPCR))
-
-
-
-##### Model With parasite_burden (high vs low)
-corvif(cbind(cor_met$Temperature_C, cor_met$pH, cor_met$RDO_Conc_mgL, cor_met$ORP_mV, cor_met$RainGauge_mm, cor_met$Salinity_PSU, cor_met$parasite_burden))
-
-# rain
-corvif(cbind(cor_met$RDO_Conc_mgL, cor_met$ORP_mV, cor_met$RainGauge_mm, cor_met$Salinity_PSU, cor_met$parasite_burden))
-
-corvif(cbind(cor_met$ORP_mV, cor_met$RainGauge_mm, cor_met$Salinity_PSU, cor_met$parasite_burden))
-
-# temp
-corvif(cbind(cor_met$Temperature_C, cor_met$RDO_Conc_mgL, cor_met$ORP_mV, cor_met$Salinity_PSU, cor_met$parasite_burden))
-
-corvif(cbind(cor_met$Temperature_C, cor_met$pH, cor_met$ORP_mV, cor_met$Salinity_PSU, cor_met$parasite_burden))
-
-
-rm(cor_met)
+sample_data(ps3) %>% 
+  unclass %>% 
+  as.data.frame() %>% 
+  select(Feeding_Type, NEC, Sepsis, Died, Mode_of_Delivery, Antenatal_Antibiotics, Neonatal_Antibiotics, Chorioamnionitis, Antenatal_Infections, Prolonged_Membrane_Rupture, Diabetes, Preeclampsia, ROP, Birth_Weight, Nursery_Discharge_Weight, Date_Collected, Gestational_Age_at_Birth, Primary_Group, Type) %>% 
+  corvif()
 ```
 
+###################################################################################
 
-**NB**
- - CANNOT have temperature and rain in the same model.
- - CANNOT have rain and pH in the same model.
- - *ddPCR* and *parasite_burden* can have the same models formulas, and I beleive that the model with **Rain** would be best based on the results of the **PCoA**. However, they are extremely similar.
- - If the environmental variables are the average of a date, the model(s) would have to be either a combination of the variables or just date and parasite concentration.
- - As the parasite concentration is different between samples, date and parasite concentration variables are still independent, and they are also not collinear. However, there still could be some level of relationship but modelling together should be fine.
-
-**Model Options - based on PCoA, univariate DESeq2 analysis and collinearity tests:**
- - pH/RDO_Conc_mgL, ORP_mV, RainGauge_mm, Salinity_PSU & ddPCR/paraiste_burden.
- - pH/RDO_Conc_mgL, ORP_mV, Temperature_C, Salinity_PSU & ddPCR/paraiste_burden.
- 
- 
-**Giana's Suggestions: "To choose from the water quality parameters, my preference would be to keep first the rain levels, second Temperature, third turbidity, fourth Oxygen and then pH".**
-
-**Final models**
- - RDO_Conc_mgL, ORP_mV, RainGauge_mm, Salinity_PSU & paraiste_burden
- - RDO_Conc_mgL, ORP_mV, RainGauge_mm, Salinity_PSU & paraiste_burden
-
-**I would argue that Rain would be a better option over temperature based on the PCoA.**
 
 Create a stricter p threshold for results functions.
 ```{r}
