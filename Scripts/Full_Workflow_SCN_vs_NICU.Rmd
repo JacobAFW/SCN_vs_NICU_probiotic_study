@@ -14,6 +14,7 @@ header-includes:
 
 ```{r setup, include=FALSE}
 knitr::opts_chunk$set(echo=T, eval=F)
+knitr::opts_knit$set(root.dir = 'C:/Users/Jacob/Desktop/Jacob_Uni/Data/SCN_vs_NICU_probiotic_study')
 ```
 
 # About.
@@ -306,7 +307,8 @@ rm(decontaminated)
  
 ```{r, include=F}
 # Reading in pilot data for rmd.
-seqtab.NICU <- read.csv("FILEPATH", row.names = 1) %>%
+seqtab.NICU <- read_csv("Data/seqtab_original.csv") %>%
+  column_to_rownames("ID") %>% 
   as.matrix() %>% 
   mergeSequenceTables(seqtab)
 ```
