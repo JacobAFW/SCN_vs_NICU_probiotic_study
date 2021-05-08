@@ -41,7 +41,7 @@ sapply(c("dada2", "phyloseq", "DECIPHER", "phangorn", "BiocManager", "BiocStyle"
  - First define the file path to the directory containing the fastq files (we will use this several times).
  
 ```{r, warning=F, message=F}
-path <-"Data"
+path <-"Data/new_data"
 
 fnFs <- sort(list.files(path, pattern = "_R1_001.fastq.gz", full.names = TRUE))
 
@@ -83,7 +83,7 @@ filtRs <- file.path(path, "filtered", paste0(sample.names, "_R_filt.fastq.gz"))
  - The number of reads filtered is checked. If reads are too low, can alter parameters.
  
 ```{r, warning=F, message=F}
-out <- filterAndTrim(fnFs, filtFs, fnRs, filtRs, truncLen = c(280,200), 
+out <- filterAndTrim(fnFs, filtFs, fnRs, filtRs, truncLen = c(250,250), 
                      trimLeft = c(16,21), 
                      maxN = 0, 
                      maxEE = c(2,2), 
@@ -194,7 +194,7 @@ colnames(track) <- c("input", "filtered", "denoisedF", "denoisedR", "merged", "n
 rownames(track) <- sample.names
 
 head(track)
-rm(track)
+
 ```
 
 ## Contamination removal with *MicroDecon*.
@@ -223,56 +223,23 @@ wrangle_microdecon <- function(seqtab.nochim){
 microdecon.df <- t(seqtab.nochim) %>%
   as.data.frame()
 
-# a prior grouping
-  Metadata_microdecon <- Metadata %>% 
-  arrange(Date) %>% 
-  select(Sample, Date) %>% # select key columns
-  mutate(Sample = paste0("AM", Sample)) # add AM into cell values to be the same as the count table
-
 microdecon.df <- microdecon.df %>% 
-  relocate(any_of(Metadata_microdecon$Sample)) # rearrange the columns by the ordered metadata
-
-# blanks to first columns
-Metadata_microdecon <- Metadata %>% 
-  filter(Type == "negative control") %>%  # filter for negative controls
-  select(Sample, Type, Date) %>% 
-  mutate(Sample = paste0("AM", Sample)) 
-
-microdecon.df <- microdecon.df %>% 
-  relocate(any_of(Metadata_microdecon$Sample)) %>% 
+  relocate("JW219B", "JW220") %>% 
   tibble::rownames_to_column(var = "ID") # turn the rownames into the first column
 }
 
 microdecon.df <- wrangle_microdecon(seqtab.nochim)
-
-rm(seqtab.nochim)
 ```
 
 
 ### Decontaminate data using `decon()`.
-
- - get the counts for each of the a priori groups for `numd.ind`, not including the blanks.
- 
-```{r}
-numb_ind_vector <- Metadata %>% 
-  filter(Type == "Microbiome") %>% # remove blanks
-  group_by(Date) %>% 
-  summarise(n()) %>% # get the counts for each date.
-  select("n()") %>% 
-  add_row("n()" = 35) %>% # 26 is the number of samples there are no metadata for.
-  rename("n" = "n()")
-```
-
- - `(ncol(microdecon.df) - 26) - (nrow(Metadata))` should be equal to 1 (ID column).
  - `numb.ind` is the number of columns for each priori grouping.
  - `taxa = F` as there is no taxonomy in the dataframe.
  
 ```{r, warning=F, message=F}
-decontaminated <- decon(data = microdecon.df, numb.blanks = 7, 
-                  numb.ind = numb_ind_vector$n, taxa = F)
+decontaminated <- decon(data = microdecon.df, numb.blanks = 2, 
+                  numb.ind = c(21,3), taxa = F)
 
-rm(microdecon.df)
-rm(numb_ind_vector)
 ```
 
 #### Check *MicroDecon* Outputs.
@@ -299,35 +266,44 @@ seqtab.microdecon <- decontaminated$decon.table %>%
   select(-1) %>% # remove mean blank
   as.matrix() %>% 
   t()
+```
 
-rm(decontaminated)
+## Remove non-amplified samples and rename all.
+
+```{r}
+seqtab.microdecon <- seqtab.microdecon %>% 
+  as.data.frame() %>% 
+  rownames_to_column("ID") %>% 
+  filter(ID != c("JW203", "JW211")) %>% 
+  mutate(ID = str_remove(ID, "b")) %>% 
+  mutate(ID = str_remove(ID, "JW")) %>% 
+  column_to_rownames("ID") %>% 
+  as.matrix()
 ```
 
 ### Merging multiple sequence runs.
  
 ```{r, include=F}
 # Reading in pilot data for rmd.
-seqtab.NICU <- read_csv("Data/seqtab_original.csv") %>%
+seqtab.combined <- read_csv("Data/seqtab_original.csv") %>%
   column_to_rownames("ID") %>% 
   as.matrix() %>% 
-  mergeSequenceTables(seqtab)
+  mergeSequenceTables(seqtab.microdecon)
 ```
 
 ## Assign taxonomy.
  - With optional species addition (there is an agglomeration step downstream, so you can add species now for curiosities sake, and remove later for analysis).
  
 ```{r, warning=F, message=F}
-taxa <- assignTaxonomy(seqtab.microdecon, "~/Aquaculture_Microbiome/SILVA/silva_nr_v132_train_set.fa.gz")
+taxa <- assignTaxonomy(seqtab.microdecon, "Data/silva_nr_v132_train_set.fa.gz")
 
 taxa.print <- taxa # Removes sequence rownames for display only
 rownames(taxa.print) <- NULL
 ```
 
-# Need to run species assignment on hpc
+# Species assignment on hpc
 ```{r}
-write.csv(taxa, "taxa.csv")
-
-taxa <- addSpecies(taxa, "~/Aquaculture_Microbiome/SILVA/silva_species_assignment_v132.fa.gz") 
+taxa <- addSpecies(taxa, "Data/silva_species_assignment_v132.fa.gz") 
 ```
 
 ### Calculate percentage of NA taxa
@@ -363,7 +339,13 @@ Metadata <- readxl::read_excel("Data/New_metadata.xlsx") %>%
     readxl::read_excel("Data/Old_metadata.xlsx") %>% 
       separate(DOB, into = c("DOB", "Time"), sep = "\\s") %>% 
       mutate(DOB = as.Date(DOB)) %>% 
-      select(1, 3:4, 9, 17:18, 20:35)) 
+      select(1, 3:4, 9, 17:18, 20:35)) %>% 
+  add_row(URN = "ZymoDNA1", ID = "ZymoDNA1") %>% 
+  add_row(URN = "ZymoDNA2", ID = "ZymoDNA2") %>% 
+  add_row(URN = "ZymoDNA4", ID = "ZymoDNA3") %>% 
+  mutate(Sample_ID = ID) %>% 
+  column_to_rownames("Sample_ID") %>% 
+  mutate(Mode_of_Delivery = str_replace(Mode_of_Delivery, "Ceaserean", "Cesarean"))
 ```
 
 ## Constuct a phylogenetic tree (for Phyloseq object downstream, required for distance measures).
@@ -394,17 +376,16 @@ detach("package:phangorn", unload = TRUE) # conflicts downstream
 return(fitGTR)
 }
 
-fitGTR <- build_tree(seqtab.microdecon)
+fitGTR <- build_tree(seqtab.combined)
 ```
 
 ## Constrcut the Phyloseq object.
  - Includes: metadata, ASV table, taxonomy table and phylogenetic tree.
  
 ```{r, warning=F, message=F, results='hide'}
-ps <- phyloseq(otu_table(seqtab.microdecon, taxa_are_rows=FALSE), 
+ps <- phyloseq(otu_table(seqtab.combined, taxa_are_rows=FALSE), 
                sample_data(Metadata), 
-               tax_table(taxa),
-               phy_tree(fitGTR$tree))
+               tax_table(taxa))
 ```
 
 ## Wrangling the metadata.
