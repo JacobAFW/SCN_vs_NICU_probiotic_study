@@ -478,7 +478,7 @@ prevdf %>%
 ```
 
 ### Aggolmerate taxa.
- - Combine features that descend from the same genus as most species have not been identified due to the poor sequencing depth in 16S.
+ - Combine features that descend from the same genus as most species have not been identified due to the poor sequencing depth in 16S. It is due to the length of the fragment amplified from the 16SrRNA gene. Sequencing depth affects diversity meassures. 
  - Can check how many genera would be present after filtering by running `length(get_taxa_unique(ps2, taxonomic.rank = "Genus"))`, and `ntaxa(ps3)` will give the number of post agglomeration taxa.
  
 ```{r, warning=F, message=F, results='hide'}
