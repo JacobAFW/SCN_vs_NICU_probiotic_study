@@ -194,7 +194,6 @@ colnames(track) <- c("input", "filtered", "denoisedF", "denoisedR", "merged", "n
 rownames(track) <- sample.names
 
 head(track)
-
 ```
 
 ## Contamination removal with *MicroDecon*.
@@ -340,9 +339,9 @@ Metadata <- readxl::read_excel("Data/New_metadata.xlsx") %>%
       separate(DOB, into = c("DOB", "Time"), sep = "\\s") %>% 
       mutate(DOB = as.Date(DOB)) %>% 
       select(1, 3:4, 9, 17:18, 20:35)) %>% 
-  add_row(URN = "ZymoDNA1", ID = "ZymoDNA1") %>% 
-  add_row(URN = "ZymoDNA2", ID = "ZymoDNA2") %>% 
-  add_row(URN = "ZymoDNA4", ID = "ZymoDNA3") %>% 
+  add_row(URN = "ZymoDNA1", ID = "ZymoDNA1", Type = "Control") %>% 
+  add_row(URN = "ZymoDNA2", ID = "ZymoDNA2", Type = "Control") %>% 
+  add_row(URN = "ZymoDNA4", ID = "ZymoDNA4", Type = "Control") %>% 
   mutate(Sample_ID = ID) %>% 
   column_to_rownames("Sample_ID") %>% 
   mutate(Mode_of_Delivery = str_replace(Mode_of_Delivery, "Ceaserean", "Cesarean"))
@@ -402,11 +401,15 @@ sample_data(ps) <- sample_data(ps) %>%
   column_to_rownames("Sample") 
 ```
 
-### Subset phyloseq object for data to be analyzed.
-
-**Change `Type` and `Discharge`.**
-```{r, warning=F, message=F, results='hide'}
-ps <- subset_samples(ps, Type == "Discharge")
+## Getting read counts
+```{r}
+sample_data(ps) %>% 
+  unclass() %>% 
+  as.data.frame() %>% 
+  mutate(TotalReads = sample_sums(ps)) %>% View()
+  ggplot(aes(TotalReads)) + 
+    geom_histogram() + 
+    ggtitle("Sequencing Depth")
 ```
 
 ## Filtering and normalisation.
@@ -465,6 +468,13 @@ keepTaxa = rownames(prevdf)[(prevdf$Prevalence >= prevalenceThreshold)]
 ps2 = prune_taxa(keepTaxa, ps1)
 ```
 
+### Subset phyloseq object for data to be analyzed.
+
+**Change `Type` and `Discharge`.**
+```{r, warning=F, message=F, results='hide'}
+ps2 <- subset_samples(ps2, Type == "Discharge")
+```
+
  - Explore the relationship on the filtered data set.
 ```{r, warning=F, message=F, fig.cap="Scatterplot exploring the relationship between prevelance and abundance of phyla on data passed through a prevalence threshold."}
 prevdf %>%
@@ -482,7 +492,7 @@ prevdf %>%
  - Can check how many genera would be present after filtering by running `length(get_taxa_unique(ps2, taxonomic.rank = "Genus"))`, and `ntaxa(ps3)` will give the number of post agglomeration taxa.
  
 ```{r, warning=F, message=F, results='hide'}
-ps3 = tax_glom(ps2, "Genus", NArm = TRUE)
+ps3 = tax_glom(ps2, "Genus", NArm = TRUE) %>% phyloseq_rm_na_tax()
 ```
 
  - Create tree plots to observe pre and post agglomeration.
