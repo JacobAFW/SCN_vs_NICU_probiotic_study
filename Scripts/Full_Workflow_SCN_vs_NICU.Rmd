@@ -83,7 +83,7 @@ filtRs <- file.path(path, "filtered", paste0(sample.names, "_R_filt.fastq.gz"))
  - The number of reads filtered is checked. If reads are too low, can alter parameters.
  
 ```{r, warning=F, message=F}
-out <- filterAndTrim(fnFs, filtFs, fnRs, filtRs, truncLen = c(250,250), 
+out <- filterAndTrim(fnFs, filtFs, fnRs, filtRs, truncLen = c(280,200), 
                      trimLeft = c(16,21), 
                      maxN = 0, 
                      maxEE = c(2,2), 
@@ -92,6 +92,7 @@ out <- filterAndTrim(fnFs, filtFs, fnRs, filtRs, truncLen = c(250,250),
                      compress = TRUE, 
                      multithread = FALSE)# windows can't support multithread
 head(out)
+out
 ```
 
 ## Infer sequence variants.
@@ -177,8 +178,6 @@ seqtab %>%
 ```{r, warning=F, message=F}
 seqtab.nochim <- removeBimeraDenovo(seqtab, method = "consensus", 
                                     multithread = TRUE, verbose = TRUE)
-
-rm(seqtab)
 ```
 
 ### Track reads through pipeline.
@@ -238,7 +237,6 @@ microdecon.df <- wrangle_microdecon(seqtab.nochim)
 ```{r, warning=F, message=F}
 decontaminated <- decon(data = microdecon.df, numb.blanks = 2, 
                   numb.ind = c(21,3), taxa = F)
-
 ```
 
 #### Check *MicroDecon* Outputs.
@@ -344,14 +342,16 @@ Metadata <- readxl::read_excel("Data/New_metadata.xlsx") %>%
   add_row(URN = "ZymoDNA4", ID = "ZymoDNA4", Type = "Control") %>% 
   mutate(Sample_ID = ID) %>% 
   column_to_rownames("Sample_ID") %>% 
-  mutate(Mode_of_Delivery = str_replace(Mode_of_Delivery, "Ceaserean", "Cesarean"))
+  mutate(Mode_of_Delivery = str_replace(Mode_of_Delivery, "Ceaserean", "Cesarean")) %>%
+  mutate(Batch = 1:nrow(.)) %>% 
+  mutate(Batch = if_else(Batch <= 20, "Run2", "Run1"))
 ```
 
 ## Constuct a phylogenetic tree (for Phyloseq object downstream, required for distance measures).
  - Peform multiple-allignment.
  - `pml` calculates the likelihood of a given tree, and then `optim.pml()` optimizes the tree topology and branch length for the selected model (GTR+G+I max tree).
 
-```{r, warning=F, message=F, results='hide'}
+```{r, warning=F, message=F, results='hide', eval=F}
 build_tree <- function(ASV_table){
   
 seqs <- getSequences(ASV_table)
@@ -402,11 +402,11 @@ sample_data(ps) <- sample_data(ps) %>%
 ```
 
 ## Getting read counts
-```{r}
+```{r, eval=F}
 sample_data(ps) %>% 
   unclass() %>% 
   as.data.frame() %>% 
-  mutate(TotalReads = sample_sums(ps)) %>% View()
+  mutate(TotalReads = sample_sums(ps)) %>% 
   ggplot(aes(TotalReads)) + 
     geom_histogram() + 
     ggtitle("Sequencing Depth")
@@ -420,6 +420,15 @@ sample_data(ps) %>%
 
 ```{r, warning=F, message=F, results='hide'}
 ps1 <- subset_taxa(ps, !is.na(Phylum) & !Phylum %in% c("", "uncharacterized"))
+```
+
+### Remove problematic samples
+ - samples that produce NA values during transformations downstream in the otu_table (for some reason it won't allow all within the same function, hence the pipe)
+ 
+```{r, warning=F, message=F}
+ps1 <- subset_samples(ps1, ID != "219") %>%  
+  subset_samples(ID != "141") %>% 
+  subset_samples(ID != "118")
 ```
 
 #### Check percentages of NA values left.
@@ -466,6 +475,7 @@ prevalenceThreshold = 0.01 * nsamples(ps1)
 keepTaxa = rownames(prevdf)[(prevdf$Prevalence >= prevalenceThreshold)]
 
 ps2 = prune_taxa(keepTaxa, ps1)
+#ps2 = ps1
 ```
 
 ### Subset phyloseq object for data to be analyzed.
@@ -489,15 +499,15 @@ prevdf %>%
 
 ### Aggolmerate taxa.
  - Combine features that descend from the same genus as most species have not been identified due to the poor taxonomic depth in 16S, a result of the length of the fragment amplified from the 16SrRNA gene.  
- - Can check how many genera would be present after filtering by running `length(get_taxa_unique(ps2, taxonomic.rank = "Genus"))`, and `ntaxa(ps3)` will give the number of post agglomeration taxa.
+ - Can check how many genera would be present after filtering by running `length(get_taxa_unique(ps2, taxonomic.rank = "Genus"))` and/or `ntaxa(ps3)` will give the number of post agglomeration taxa.
  
 ```{r, warning=F, message=F, results='hide'}
-ps3 = tax_glom(ps2, "Genus", NArm = TRUE) %>% phyloseq_rm_na_tax()
+ps3 = tax_glom(ps2, "Genus", NArm = TRUE) 
 ```
 
  - Create tree plots to observe pre and post agglomeration.
  
-```{r, warning=F, message=F, fig.cap="Tree plots exploring the agglomeration of taxa at the genus level."}
+```{r, warning=F, message=F, fig.cap="Tree plots exploring the agglomeration of taxa at the genus level.", eval=F}
 grid.arrange(nrow = 1, 
     (plot_tree(ps2, method = "treeonly",
       ladderize = "left", title = "Before Agglomeration") +
@@ -549,7 +559,7 @@ grid.arrange(nrow = 2, (plot_abundance(ps3, Title = "Abundance", Color = "Type",
  - Explore normalisation with tree plots.
 
 **Change `Type`.**
-```{r, warning=F, message=F, fig.cap="Tree plot exploring the normalised distribution of taxa between admission and discharge samples."}
+```{r, warning=F, message=F, fig.cap="Tree plot exploring the normalised distribution of taxa between admission and discharge samples.", eval=F}
 plot_tree(ps4.NICU_no_na, size = "Abundance", color = "Type", 
     justify = "yes please", ladderize = "left") +
     labs(title = "Phylogenetic Tree and Relative Abundance") +
@@ -590,7 +600,7 @@ plot_bar(ps, fill = taxonomy) +
     axis.ticks = element_blank())
 }
 
-plot_bar_auto(ps.top20, "Phylum")
+plot_bar_auto(ps.top20, "Genus")
 ```
 
 ### Calculate the number samples containing a given taxa by creating a `samples_with_taxa()` function.
@@ -616,7 +626,7 @@ samples_with_taxa <- function(ps_object, taxonomy_level, taxa){
         nrow()
 }
 
-samples_with_taxa(ps4.microbiome, "Genus", "Bifidobacterium")
+samples_with_taxa(ps4, "Genus", "Bifidobacterium")
 ```
 
 ## Beta diversity
@@ -645,7 +655,9 @@ plot_ordination(filtered_ps, ps_ordination, color = variable,
   title = "PCoA (Bray-Curtis)") +
   labs(col = variable) +
   coord_fixed(sqrt(evals[2] / evals[1])) +
-  geom_point(size = 2) 
+  geom_point(size = 5) +
+  stat_ellipse(typre = "norm", linetype = 2) +
+  scale_color_hue(labels = c("Probiotic-treated", "Non-treated"))
  }
 
 ordination_plots(ps2, "Primary_Group", "PCoA", "bray")
@@ -675,6 +687,13 @@ ggsave("PCoA_Bray.png",
   - there is a difference in both the location and the dispersion.
   - If you get a significant PERMANOVA you'll want to distinguish between the three options by checking the homogeneity condition using `permdisp()`. If you get a non-significant result the first option above is correct.
   - `betadisper()` gives a measure of the dispersion within groups. Thus, if the PERMANOVA test is significant and the permdisp is not, the significant result in your communities is due to a mean shift in community composition and not from increased variance within groups.
+  
+  
+  
+  Primary_Group + Feeding_Type + NEC + Sepsis + 
+                      Mode_of_Delivery +  Neonatal_Antibiotics + Chorioamnionitis + 
+                      Preeclampsia + ROP + Batch
+  
   
 **Change `Primary_Group`.**
 ```{r, warning=F, message=F}
@@ -759,11 +778,11 @@ ps_alpha_div <- ps2 %>%
 
 # creat ID column based on rownames
 ps_alpha_div <- rownames_to_column(ps_alpha_div, var = "ID") %>% 
-                mutate(ID = as.factor(gsub("AM", "", ID)))
+                mutate(ID = as.factor(gsub("X", "", ID)))
 
 # join alpha metrics with metadata by the ID column
 Metadata %>%
-  filter(Type == "Microbiome") %>% 
+  filter(Type == "Discharge") %>% 
   right_join(ps_alpha_div, by = "ID") %>%
   as.data.frame() 
 }
@@ -823,7 +842,7 @@ tab_df(diversity_analysis(ps_metadata), alternate.rows = TRUE,
  
 ```{r, warning=F, message=F, fig.cap="Scatterplot of richness and shannon diversity metrics coloured by ddPCR."}
 plot_richness(ps2, measures = c("Shannon", "Observed"), 
-              color = "ddPCR", title = "") +
+              color = "Primary_Group", title = "") +
     geom_point(size = 3.5, alpha = 0.7) +
     theme(axis.text.x = element_blank(), 
           axis.ticks.x = element_blank(), 
@@ -845,8 +864,8 @@ plot_richness(ps2, measures = c("Shannon", "Observed"),
               x = "Primary_Group", color = "Primary_Group", title = "") +
               geom_jitter(size = 1, alpha = 0.7) +
               geom_boxplot() +
-              theme(panel.border = element_rect(colour = "grey", fill = NA, size = 1), legend.position = "none", 
-              axis.text.x = element_blank(), axis.ticks = element_blank())
+              theme(panel.border = element_rect(colour = "grey", fill = NA, size = 1), 
+              axis.text.x = element_blank(), axis.ticks = element_blank()) 
 ```
 
  - Export boxplot.
@@ -896,7 +915,7 @@ deseq_filter <- function(deseq_object, count, samples){
 get_deseq_res_lrt <- function(deseq_object){
   res = results(deseq_object)
   res = res[order(res$padj, na.last = NA), ]
-  sigtab = res[(res$padj < 0.05), ] 
+  sigtab = res[(res$padj < 0.1), ] 
   sigtab = cbind(as(sigtab, "data.frame"), 
           as(tax_table(ps3)[rownames(sigtab), ], "matrix"))
   sigtab %>%
@@ -908,7 +927,7 @@ get_deseq_res_lrt <- function(deseq_object){
 get_deseq_res_cont <- function(deseq_object, contrast_variable){
   res = results(deseq_object, name = contrast_variable)
   res = res[order(res$padj, na.last = NA), ]
-  sigtab = res[(res$padj < 0.05), ] 
+  sigtab = res[(res$padj < 0.1), ] 
   sigtab = cbind(as(sigtab, "data.frame"), 
           as(tax_table(ps3)[rownames(sigtab), ], "matrix"))
   sigtab %>%
@@ -920,8 +939,7 @@ get_deseq_res_cont <- function(deseq_object, contrast_variable){
 get_deseq_res_cat <- function(desq_object, contrast_variable, level1, level2){
   res = results(desq_object, contrast = c(contrast_variable, level1, level2))
   res = res[order(res$padj, na.last = NA), ]
-  alpha = 0.05
-  sigtab = res[(res$padj < alpha), ] 
+  sigtab = res[(res$padj < 0.1), ] 
   sigtab = cbind(as(sigtab, "data.frame"), 
     as(tax_table(ps3)[rownames(sigtab), ], "matrix"))
   sigtab %>%
@@ -941,7 +959,7 @@ get_deseq_res_cat <- function(desq_object, contrast_variable, level1, level2){
 # LRT
 phyloseq_to_deseq2(ps3, ~ Primary_Group) %>% 
     calc_geo_means() %>% 
-    deseq_filter(10,10) %>% 
+    deseq_filter(10,30) %>% 
     DESeq(fitType = "local", test = "LRT", reduced = ~ 1) %>% 
     get_deseq_res_lrt() %>% 
     remove_rownames()
@@ -952,7 +970,7 @@ phyloseq_to_deseq2(ps3, ~ Primary_Group) %>%
 # Wald
 phyloseq_to_deseq2(ps3, ~ Primary_Group) %>% 
     calc_geo_means() %>% 
-    deseq_filter(10,10) %>% 
+    deseq_filter(10,30) %>% 
     DESeq(fitType = "local", test = "Wald") %>% 
     get_deseq_res_cat("Primary_Group", "NICU", "SCN") %>%
     remove_rownames()
@@ -972,8 +990,47 @@ sapply(c("DESeq2", "phyloseq", "dplyr", "ggplot2", "grid",
 ### Explore clustering of variables with PCoA and Bray-Curtis.
 
 ```{r, fig.cap="PCoA plot of Bray-Curtis distances coloured by probiotic group.", warning=F, message=F}
-ordination_plots(ps2, "Primary_Group", "PCoA", "bray")
+ordination_plots(ps2, "Nursery_Discharge_Weight", "PCoA", "bray")
+
+permanova_func <- function(ps2.TSS){
+  
+# permanova
+ps_otu <- data.frame(otu_table(ps2.TSS))
+ps_metadata <- data.frame(sample_data(ps2.TSS))
+permanova <- adonis(ps_otu ~Neonatal_Antibiotics, data = ps_metadata, method = "bray") 
+permanova <- tableGrob(as.data.frame(permanova$aov.tab)) %>% 
+  annotate_figure(fig.lab = "PERMANOVA", fig.lab.face = "bold", fig.lab.size = 15)
+
+# homogeneity condition
+dist <- vegdist(ps_otu)
+homogeneity <- as.data.frame(anova(betadisper(dist, ps_metadata$Neonatal_Antibiotics))) %>% 
+  tableGrob() %>% 
+  annotate_figure(fig.lab = "Homogeneity Condition", fig.lab.face = "bold", fig.lab.size = 15)
+
+# combine ouputs in a grid
+grid.arrange(permanova, homogeneity, ncol = 1)
+
+}
+
+permanova_func(ps2.TSS)
 ```
+
+### Explore taxonmic distribution.
+
+```{r}
+plot_bar_auto <- function(ps, taxonomy){
+plot_bar(ps, fill = taxonomy) + 
+    facet_wrap(~Neonatal_Antibiotics, scales = "free_x") + 
+    labs(title = paste0("Level:", taxonomy), y = "Abundance") + 
+    theme(legend.position = "bottom", legend.title = element_blank(), 
+    axis.title.x = element_blank(), axis.text.x = element_blank(), 
+    axis.ticks = element_blank())
+}
+
+plot_bar_auto(ps.top20, "Genus")
+```
+
+
 
 #### For multiple plots.
 
@@ -1067,13 +1124,17 @@ corvif <- function(data) {
 }
 ```
 
+
+
 ```{r, eval=F}
 sample_data(ps3) %>% 
   unclass %>% 
   as.data.frame() %>% 
-  select(Feeding_Type, NEC, Sepsis, Died, Mode_of_Delivery, Antenatal_Antibiotics, Neonatal_Antibiotics, Chorioamnionitis, Antenatal_Infections, Prolonged_Membrane_Rupture, Diabetes, Preeclampsia, ROP, Birth_Weight, Nursery_Discharge_Weight, Date_Collected, Gestational_Age_at_Birth, Primary_Group, Type) %>% 
+  select(Feeding_Type, NEC, Sepsis, Mode_of_Delivery, Neonatal_Antibiotics, Chorioamnionitis, Preeclampsia, ROP, Primary_Group, Batch) %>% 
   corvif()
 ```
+
+Maybes: Antenatal_Infections, Antenatal_Antibiotics,
 
 ## DESeq2
 
@@ -1086,9 +1147,10 @@ sample_data(ps3) %>%
 
 **Change `Primary_Group` & `Feeding_Type`.**
 ```{r, warning=F, message=F}
-phyloseq_to_deseq2(ps3, ~ Primary_Group + Feeding_Type) %>% 
+phyloseq_to_deseq2(ps3, ~ Feeding_Type + NEC + Sepsis + Mode_of_Delivery +  
+                   Neonatal_Antibiotics + Chorioamnionitis + Preeclampsia + ROP + Primary_Group + Batch) %>% 
     calc_geo_means() %>% 
-    deseq_filter() %>% 
+    deseq_filter(10, 10) %>% 
     DESeq(fitType = "local", test = "LRT", reduced = ~ Primary_Group) %>% 
     get_deseq_res_lrt() %>% 
     remove_rownames() 
@@ -1096,9 +1158,35 @@ phyloseq_to_deseq2(ps3, ~ Primary_Group + Feeding_Type) %>%
 
 ### Wald
 
+
+```{r}
+# function for Walds test and categorical variables
+get_deseq_res_cat <- function(desq_object, contrast_variable, level1, level2){
+  res = results(desq_object, contrast = c(contrast_variable, level1, level2))
+  res = res[order(res$padj, na.last = NA), ]
+  sigtab = res[(res$padj < 0.05), ] 
+  sigtab = cbind(as(sigtab, "data.frame"), 
+    as(tax_table(ps3)[rownames(sigtab), ], "matrix"))
+  sigtab %>%
+  arrange(padj) %>%
+  select("log2FoldChange", "lfcSE", "padj", "Genus") %>%
+  add_column(Variable = paste0(contrast_variable, level1)) # label the base level
+}
+
+phyloseq_to_deseq2(ps3, ~ Feeding_Type + NEC + Sepsis + Mode_of_Delivery +  
+                   Neonatal_Antibiotics + Chorioamnionitis + Preeclampsia + ROP + Primary_Group + Batch) %>% 
+  calc_geo_means() %>% 
+  deseq_filter(10, 10) %>% 
+  DESeq(fitType = "local", test = "Wald") %>% 
+  get_deseq_res_cat("Primary_Group", "NICU", "SCN") %>% 
+  remove_rownames()
+```
+
+
 **Change variables and arguments.**
 ```{r, warning=F, message=F}
-deseq_model <- phyloseq_to_deseq2(ps3, ~ Primary_Group + Feeding_Type + NEC) %>% 
+deseq_model <- phyloseq_to_deseq2(ps3, ~ Feeding_Type + NEC + Sepsis + Mode_of_Delivery +  
+                   Neonatal_Antibiotics + Chorioamnionitis + Preeclampsia + ROP + Primary_Group + Batch) %>% 
     calc_geo_means() %>% 
     deseq_filter() %>% 
     DESeq(fitType = "local", test = "Wald")
@@ -1185,6 +1273,91 @@ multi.deseq.clean %>%
    ylim(-20,20)
 ```
 
+# Mixed effects modelling with PERMANOVA
+
+```{r, warning=F, message=F}
+permanova_func <- function(ps2.TSS){
+  
+# permanova
+ps_otu <- data.frame(otu_table(ps2.TSS))
+ps_metadata <- data.frame(sample_data(ps2.TSS))
+permanova <- adonis(ps_otu ~Primary_Group + Feeding_Type + NEC + Sepsis + 
+                      Mode_of_Delivery +  Neonatal_Antibiotics + Chorioamnionitis + 
+                      Preeclampsia + ROP + Batch, data = ps_metadata, method = "bray", permutations = 10000) 
+permanova <- tableGrob(as.data.frame(permanova$aov.tab)) %>% 
+  annotate_figure(fig.lab = "PERMANOVA", fig.lab.face = "bold", fig.lab.size = 15)
+
+# homogeneity condition
+dist <- vegdist(ps_otu)
+homogeneity <- as.data.frame(anova(betadisper(dist, ps_metadata$Primary_Group))) %>% 
+  tableGrob() %>% 
+  annotate_figure(fig.lab = "Homogeneity Condition", fig.lab.face = "bold", fig.lab.size = 15)
+
+# combine ouputs in a grid
+grid.arrange(permanova, homogeneity, ncol = 1)
+
+}
+
+permanova_func(ps2.TSS)
+```
+
+```{r}
+otu_table(ps2.TSS) %>% 
+data.frame() %>% 
+vegdist() %>% 
+betadisper(data.frame(sample_data(ps2.TSS))$Batch) %>% 
+anova()
+```
+
+## envfit
+```{r}
+ordination_distance <- ordinate(ps2, method="NMDS", distance="bray")
+envdat.phy <- ps2 %>% 
+  sample_data() %>%
+  unclass() %>% 
+  as.data.frame() %>% 
+  centre_and_scale()
+
+envdat.phy <- ps2 %>% 
+  sample_data() %>%
+  unclass() %>% 
+  as.data.frame() %>% 
+  select(Primary_Group, Feeding_Type, NEC, Sepsis, Mode_of_Delivery, Neonatal_Antibiotics, Chorioamnionitis,
+                      Preeclampsia, ROP, Batch)
+
+envfit(ordination_distance, envdat.phy, permutations = 999) 
+
+rm()
+```
+
+```{r, warning=F, message=F}
+major_contributors <- function(ps2.TSS, variable){
+# perform permanova  
+ps_otu <- data.frame(otu_table(ps2.TSS))
+ps_metadata <- data.frame(sample_data(ps2.TSS))
+permanova <- adonis(ps_otu ~Primary_Group + Batch + Feeding_Type + NEC + Sepsis + 
+                      Mode_of_Delivery +  Neonatal_Antibiotics + Chorioamnionitis + 
+                      Preeclampsia + ROP + Primary_Group, data = ps_metadata, method = "bray")  
+
+# coefficients
+coef <- coefficients(permanova)[paste0(variable, "1"),]
+top.coef <- coef[rev(order(abs(coef)))[1:20]]
+
+genus_contributors <- tax_table(ps2.TSS) %>% 
+    unclass() %>% 
+    as.data.frame() %>% 
+    select("Genus") %>% 
+    rownames_to_column(var = "ASV") %>% 
+    right_join((as.data.frame(top.coef) %>%
+    rownames_to_column(var = "ASV"))) %>% 
+    select(!"ASV") %>% 
+    arrange(top.coef)
+
+return(genus_contributors)
+}
+
+major_contributors(ps2.TSS, "Primary_Group")
+```
 
 # Mixed effects modelling with glms for alpha diversity
 
@@ -1198,23 +1371,19 @@ sapply(c("lme4", "nlme", "dplyr", "plyr", "lmerTest", "aods3",
 ## Centre/Scale numerical values
 
 ```{r}
-glm_data <- centre_and_scale(ps_metadata)
+glm_data <- ps_metadata %>% 
+  mutate(Shannon = as.factor(Shannon)) %>% 
+  centre_and_scale() %>% 
+  mutate(Shannon = as.character(Shannon)) %>% 
+  mutate(Shannon = as.numeric(Shannon))
 ```
 
-### Test for collinearity
-
-**Change variables.**
-```{r}
-glm_data %>% 
-  select(Feeding_Type, NEC, Sepsis, Died, Mode_of_Delivery, Antenatal_Antibiotics, Neonatal_Antibiotics, Chorioamnionitis, Antenatal_Infections, Prolonged_Membrane_Rupture, Diabetes, Preeclampsia, ROP, Birth_Weight, Nursery_Discharge_Weight, Date_Collected, Gestational_Age_at_Birth, Primary_Group, Type) %>% 
-  corvif()
-```
 
 ## Fit Model
 
 **Change fixed and random effects.**
 ```{r, warning=F, message=F, results='hide'}
-global <- lme4::glmer(Shannon ~ Primary_Group + Feedin_Type + (1|URN), data = glm_data) %>% summary()
+global <- lme4::glmer(Shannon ~ Feeding_Type + Sepsis + Mode_of_Delivery + Preeclampsia + ROP + Primary_Group + Batch + (1|URN), data = glm_data) 
 ```
 
 
@@ -1255,9 +1424,14 @@ dfun <- function(x) {
 
 dfun(drop1(global))
 
-global2 <- # remove variables from inside interaction, or from model entirely
+global2 <- lme4::glmer(Shannon ~ Feeding_Type + Sepsis + Primary_Group + Batch + (1|URN), data = glm_data) 
   
 dfun(drop1(global2))
+```
+
+## lmerTest for statistical significance
+```{r}
+lmerTest::lmer(Shannon ~ Feeding_Type + Sepsis + Primary_Group + Batch + (1|URN), data = glm_data) %>% summary()
 ```
 
 ### Calculate the goodness of fit and R2.
@@ -1268,6 +1442,43 @@ gof(global2)
 r.squaredGLMM(global2)
 ```
 
+```{r}
+sjPlot::plot_model(global2, vline.color = "red", sort.est = TRUE, title = "GLM for Shannon diversity") 
+```
+
+```{r}
+sjPlot::plot_model(global2, vline.color = "red", sort.est = TRUE, title = "GLM for Shannon diversity", type="pred") 
+```
+
+```{r}
+plot_richness(ps2, measures = c("Shannon", "Observed"), 
+              x = "Primary_Group", color = "Primary_Group", title = "") +
+              geom_jitter(size = 1, alpha = 0.7) +
+              geom_boxplot() +
+              theme(panel.border = element_rect(colour = "grey", fill = NA, size = 1), 
+              axis.text.x = element_blank(), axis.ticks = element_blank()) 
+```
+
+
+Feeding_Type + Sepsis + Primary_Group + Batch
+
+```{r}
+plot_richness(ps2, measures = c("Shannon", "Observed"), 
+              x = "Primary_Group",  title = "") +
+              geom_boxplot() +
+              geom_jitter(size = 5, alpha = 0.7, mapping = aes(color = Batch)) +
+              theme(panel.border = element_rect(colour = "grey", fill = NA, size = 1), 
+               axis.ticks = element_blank()) 
+```
+
+```{r}
+plot_richness(ps2, measures = c("Shannon", "Observed"), 
+              x = "Batch", color = "Batch", title = "") +
+              geom_jitter(size = 1, alpha = 0.7) +
+              geom_boxplot() +
+              theme(panel.border = element_rect(colour = "grey", fill = NA, size = 1), 
+              axis.text.x = element_blank(), axis.ticks = element_blank()) 
+```
 ### QQ-Plot.
 
 **Replace model name with final model.**
