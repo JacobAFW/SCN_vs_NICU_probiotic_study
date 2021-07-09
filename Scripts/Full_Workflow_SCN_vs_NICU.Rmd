@@ -660,7 +660,7 @@ plot_ordination(filtered_ps, ps_ordination, color = variable,
   scale_color_hue(labels = c("Probiotic-treated", "Non-treated"))
  }
 
-ordination_plots(ps2, "Primary_Group", "PCoA", "bray")
+ordination_plots(ps2.TSS, "Primary_Group", "PCoA", "bray")
 ```
 
  - Export plot.
@@ -983,14 +983,14 @@ phyloseq_to_deseq2(ps3, ~ Primary_Group) %>%
 
 ```{r, warning=F, message=F, results='hide'}
 sapply(c("DESeq2", "phyloseq", "dplyr", "ggplot2", "grid", 
-         "gridExtra", "ggpubr", "sjPlot", "pheatmap", "tidyverse"), 
+         "gridExtra", "ggpubr", "sjPlot", "pheatmap", "tidyverse", "vegan"), 
           require, character.only = TRUE)
 ```
 
 ### Explore clustering of variables with PCoA and Bray-Curtis.
 
 ```{r, fig.cap="PCoA plot of Bray-Curtis distances coloured by probiotic group.", warning=F, message=F}
-ordination_plots(ps2, "Nursery_Discharge_Weight", "PCoA", "bray")
+ordination_plots(ps2.TSS, "Nursery_Discharge_Weight", "PCoA", "bray")
 
 permanova_func <- function(ps2.TSS){
   
@@ -1035,8 +1035,8 @@ plot_bar_auto(ps.top20, "Genus")
 #### For multiple plots.
 
 ```{r, eval=F}
-grid.arrange(ordination_plots(ps2, "Primary_Group", "PCoA", "bray"), 
-             ordination_plots(ps2, "Feeding_Type", "PCoA", "bray"), 
+grid.arrange(ordination_plots(ps2.TSS, "Primary_Group", "PCoA", "bray"), 
+             ordination_plots(ps2.TSS, "Feeding_Type", "PCoA", "bray"), 
              ncol=2)
 ```
 
@@ -1125,12 +1125,12 @@ corvif <- function(data) {
 ```
 
 
-
 ```{r, eval=F}
 sample_data(ps3) %>% 
   unclass %>% 
   as.data.frame() %>% 
   select(Feeding_Type, NEC, Sepsis, Mode_of_Delivery, Neonatal_Antibiotics, Chorioamnionitis, Preeclampsia, ROP, Primary_Group, Batch) %>% 
+  centre_and_scale() %>% 
   corvif()
 ```
 
@@ -1155,11 +1155,11 @@ phyloseq_to_deseq2(ps3, ~ Feeding_Type + NEC + Sepsis + Mode_of_Delivery +
     get_deseq_res_lrt() %>% 
     remove_rownames() 
 ```
-
+          
 ### Wald
 
 
-```{r}
+```{r, warning=F,message=F}
 # function for Walds test and categorical variables
 get_deseq_res_cat <- function(desq_object, contrast_variable, level1, level2){
   res = results(desq_object, contrast = c(contrast_variable, level1, level2))
@@ -1173,36 +1173,52 @@ get_deseq_res_cat <- function(desq_object, contrast_variable, level1, level2){
   add_column(Variable = paste0(contrast_variable, level1)) # label the base level
 }
 
-phyloseq_to_deseq2(ps3, ~ Feeding_Type + NEC + Sepsis + Mode_of_Delivery +  
-                   Neonatal_Antibiotics + Chorioamnionitis + Preeclampsia + ROP + Primary_Group + Batch) %>% 
+phyloseq_to_deseq2(ps3, ~ Primary_Group + Feeding_Type + NEC + Sepsis + Mode_of_Delivery + Neonatal_Antibiotics + Chorioamnionitis +
+          Preeclampsia + ROP + Batch + Diabetes + Antenatal_Antibiotics) %>% 
+          calc_geo_means() %>% 
+          deseq_filter(10, 10) %>% 
+          DESeq(fitType = "local", test = "Wald") %>% 
+          get_deseq_res_cat("Primary_Group", "NICU", "SCN") %>% 
+          remove_rownames()
+```
+
+**DECIDE IN WHICH MODEL TO USE - out of the 2 chunks below.**
+```{r, warning=F, message=F}
+deseq_model <- phyloseq_to_deseq2(ps3, ~ Primary_Group + Feeding_Type + NEC + Sepsis + Mode_of_Delivery + Neonatal_Antibiotics + Chorioamnionitis +
+          Preeclampsia + ROP + Batch + Diabetes + Antenatal_Antibiotics) %>% 
+          calc_geo_means() %>% 
+          deseq_filter(10, 10) %>% 
+          DESeq(fitType = "local", test = "Wald")
+
+# rbind the results outputs to create one large output
+deseq_model %>% 
+  get_deseq_res_cat("Primary_Group", "NICU", "SCN") %>% remove_rownames() %>% 
+  rbind(deseq_model %>% get_deseq_res_cat("Feeding_Type", "Formula", "Breastmilk") %>% remove_rownames()) %>% 
+  rbind(deseq_model %>% get_deseq_res_cat("NEC", "Yes", "No") %>% remove_rownames()) %>% 
+  rbind(deseq_model %>% get_deseq_res_cat("Sepsis", "Yes", "No") %>% remove_rownames()) %>% 
+  rbind(deseq_model %>% get_deseq_res_cat("Diabetes", "Yes", "No") %>% remove_rownames()) %>% 
+  rbind(deseq_model %>% get_deseq_res_cat("Neonatal_Antibiotics", "Yes", "No") %>% remove_rownames()) %>% 
+  rbind(deseq_model %>% get_deseq_res_cat("Preeclampsia", "Yes", "No") %>% remove_rownames()) %>% 
+  rbind(deseq_model %>% get_deseq_res_cat("Chorioamnionitis", "Yes", "No") %>% remove_rownames()) %>% 
+  rbind(deseq_model %>% get_deseq_res_cat("Batch", "Run1", "Run2") %>% remove_rownames()) %>% 
+  rbind(deseq_model %>% get_deseq_res_cat("ROP", "Yes", "No") %>% remove_rownames()) %>% 
+  rbind(deseq_model %>% get_deseq_res_cat("Antenatal_Antibiotics", "Yes", "No") %>% remove_rownames()) %>% View()
+```
+
+
+## Export 
+
+```{r}
+phyloseq_to_deseq2(ps3, ~ Primary_Group + Feeding_Type + NEC + Sepsis + Mode_of_Delivery + Neonatal_Antibiotics + Chorioamnionitis +
+          Preeclampsia + ROP + Batch + Diabetes + Antenatal_Antibiotics) %>% 
   calc_geo_means() %>% 
   deseq_filter(10, 10) %>% 
   DESeq(fitType = "local", test = "Wald") %>% 
   get_deseq_res_cat("Primary_Group", "NICU", "SCN") %>% 
-  remove_rownames()
-```
-
-
-**Change variables and arguments.**
-```{r, warning=F, message=F}
-deseq_model <- phyloseq_to_deseq2(ps3, ~ Feeding_Type + NEC + Sepsis + Mode_of_Delivery +  
-                   Neonatal_Antibiotics + Chorioamnionitis + Preeclampsia + ROP + Primary_Group + Batch) %>% 
-    calc_geo_means() %>% 
-    deseq_filter() %>% 
-    DESeq(fitType = "local", test = "Wald")
-
-# rbind the results outputs to create one large output
-deseq_model <- deseq_model %>% 
-  get_deseq_res_cat("Primary_Group", "Admission", "Discharge") %>% 
   remove_rownames() %>% 
-  rbind(get_deseq_res_cat("Feeding_Type", "Breastmilk", "Formula") %>% 
-  remove_rownames()) %>% 
-  rbind(get_deseq_res_cat("Feeding_Type", "Breastmilk", "Breastmilk & Formula") %>% 
-  remove_rownames()) %>% 
-  rbind(get_deseq_res_cat("Feeding_Type", "Formula", "Breastmilk & Formula") %>% 
-  remove_rownames()) %>% 
-  rbind(get_deseq_res_cat("NEC") %>% 
-  remove_rownames())
+  tab_df(alternate.rows = TRUE, 
+       title = "Significantly Differentially Abundant Taxa", 
+       file = "DESeq2_Mixed_Model.doc")
 ```
 
 ### Export DESeq2 results 
@@ -1310,25 +1326,124 @@ anova()
 ```
 
 ## envfit
-```{r}
-ordination_distance <- ordinate(ps2, method="NMDS", distance="bray")
-envdat.phy <- ps2 %>% 
-  sample_data() %>%
-  unclass() %>% 
-  as.data.frame() %>% 
-  centre_and_scale()
 
-envdat.phy <- ps2 %>% 
+### All variables
+```{r}
+
+# CREATE FUNCTION 
+ordination_distance <- ordinate(
+    physeq = ps2.TSS, 
+    method = "NMDS",
+    distance = "bray",
+    formula = ~ Primary_Group+ Feeding_Type+ NEC+ Sepsis+ Mode_of_Delivery+ Neonatal_Antibiotics+ Chorioamnionitis+
+          Preeclampsia+ ROP+ Batch+ Gestational_Age_at_Birth+ Prolonged_Membrane_Rupture+ Diabetes+ Birth_Weight+ 
+          Nursery_Discharge_Weight+ Antenatal_Infections+ Antenatal_Antibiotics)
+
+ envdat.phy <- ps2.TSS %>% 
   sample_data() %>%
   unclass() %>% 
   as.data.frame() %>% 
   select(Primary_Group, Feeding_Type, NEC, Sepsis, Mode_of_Delivery, Neonatal_Antibiotics, Chorioamnionitis,
-                      Preeclampsia, ROP, Batch)
+          Preeclampsia, ROP, Batch, Gestational_Age_at_Birth, Prolonged_Membrane_Rupture, Diabetes, Birth_Weight, 
+          Nursery_Discharge_Weight, Antenatal_Infections, Antenatal_Antibiotics) %>% 
+  centre_and_scale()
 
-envfit(ordination_distance, envdat.phy, permutations = 999) 
+envfit_object <- envfit(ordination_distance, envdat.phy, permutations = 10000) 
 
 rm()
 ```
+
+### Plot - column
+
+```{r}
+envfit_object$vectors$r %>% 
+  as.data.frame() %>% 
+  rownames_to_column("Variable") %>%  
+  rename("r2" = ".") %>%  
+  left_join(
+    (envfit_object$vectors$pvals %>% 
+  as.data.frame() %>% 
+  rownames_to_column("Variable") %>%  
+  rename("p" = "."))) %>% 
+  rbind(
+    (envfit_object$factors$r %>% 
+  as.data.frame() %>% 
+  rownames_to_column("Variable") %>%  
+  rename("r2" = ".") %>% 
+  rows_update(., tibble(Variable = "Sepsis", r2 = 0.1)) %>% # changed to 0.1 so it fits on the plot if we create limits
+  left_join(
+    envfit_object$factors$pvals %>% 
+  as.data.frame() %>% 
+  rownames_to_column("Variable") %>%  
+  rename("p" = ".")))) %>% 
+  ggplot(aes(x = r2, y = Variable, fill = p)) +
+  geom_col() +
+  scale_x_continuous(breaks = scales::pretty_breaks(n = 10), limits = c(0, 0.1)) +
+  theme(axis.line =  element_line(size = .5), panel.background = element_blank()) + 
+  scale_fill_continuous(type = "viridis") +
+  scale_y_discrete(labels = c("Prolonged_Membrane_Rupture" = "Prolonged membrane rupture", 
+                              "Primary_Group" = "Probiotic group",
+                              "Nursery_Discharge_Weight" = "Nursery discharge weight",
+                              "Neonatal_Antibiotics" = "Neonatal antibiotics",
+                              "Mode_of_Delivery" = "Mode of delivery",
+                              "Gestational_Age_at_Birth" = "Gestation at birth",
+                              "Feeding_Type" = "Diet",
+                              "Birth_Weight" = "Birthweight",
+                              "Antenatal_Infections" = "Antenatal infections",
+                              "Antenatal_Antibiotics" = "Antenatal antibiotics"))
+  
+```
+
+### Only variables included in other models
+
+```{r}
+ordination_distance <- ordinate(
+    physeq = ps2.TSS, 
+    method = "NMDS",
+    distance = "bray",
+    formula = ~ Primary_Group + Feeding_Type + NEC + Sepsis + Mode_of_Delivery + Neonatal_Antibiotics + Chorioamnionitis +
+          Preeclampsia + ROP + Batch + Diabetes + Antenatal_Antibiotics )
+
+envdat.phy <- ps2.TSS %>% 
+  sample_data() %>%
+  unclass() %>% 
+  as.data.frame() %>% 
+  select(Primary_Group, Feeding_Type, NEC, Sepsis, Mode_of_Delivery, Neonatal_Antibiotics, Chorioamnionitis,
+          Preeclampsia, ROP, Batch, Diabetes, Antenatal_Antibiotics) %>% 
+  centre_and_scale()
+
+envfit_object <- envfit(ordination_distance, envdat.phy, permutations = 10000) 
+```
+
+## Plot - column
+
+```{r}
+envfit_object$factors$r %>% 
+  as.data.frame() %>% 
+  rownames_to_column("Variable") %>%  
+  rename("r2" = ".") %>% 
+  rows_update(., tibble(Variable = "Sepsis", r2 = 0.1)) %>% # changed to 0.1 so it fits on the plot if we create limits
+  left_join(
+    envfit_object$factors$pvals %>% 
+  as.data.frame() %>% 
+  rownames_to_column("Variable") %>%  
+  rename("p" = ".")) %>% 
+  ggplot(aes(x = r2, y = Variable, fill = p)) +
+  geom_col() +
+  scale_x_continuous(breaks = scales::pretty_breaks(n = 10), limits = c(0, 0.1)) +
+  theme(axis.line =  element_line(size = .5), panel.background = element_blank()) + 
+  scale_fill_continuous(type = "viridis") +
+  scale_y_discrete(labels = c("Primary_Group" = "Probiotic group",
+                              "Neonatal_Antibiotics" = "Neonatal antibiotics",
+                              "Mode_of_Delivery" = "Mode of delivery",
+                              "Feeding_Type" = "Diet",
+                              "Birth_Weight" = "Birthweight",
+                              "Antenatal_Infections" = "Antenatal infections",
+                              "Antenatal_Antibiotics" = "Antenatal antibiotics"))
+  
+```
+
+## Calculate major contributors
 
 ```{r, warning=F, message=F}
 major_contributors <- function(ps2.TSS, variable){
@@ -1356,7 +1471,162 @@ genus_contributors <- tax_table(ps2.TSS) %>%
 return(genus_contributors)
 }
 
-major_contributors(ps2.TSS, "Primary_Group")
+major_contributors(ps2.TSS, "Primary_Group") %>% # there are a few ASVs from the same genus so we need to summarise to imporve the plot
+  filter(top.coef > 0) %>% 
+  group_by(Genus) %>% 
+  summarise("top.coef" = mean(top.coef)) %>% 
+  rbind(
+    major_contributors(ps2.TSS, "Primary_Group") %>% 
+  filter(top.coef < 0) %>% 
+  group_by(Genus) %>% 
+  summarise("top.coef" = mean(top.coef))
+  ) %>%  
+  ggplot(aes(x = top.coef, y = Genus, fill = top.coef)) +
+  geom_col() +
+  theme(axis.line =  element_line(size = .5), panel.background = element_blank()) +
+  geom_vline(xintercept = 0.0, linetype = 1, size = .5) + 
+  scale_fill_continuous(type = "viridis", name = "Coefficient") +
+  theme(axis.title.x = element_blank(), axis.text.x = element_blank())
+```
+
+```{r}
+grid.arrange(
+  envfit_object$vectors$r %>% 
+  as.data.frame() %>% 
+  rownames_to_column("Variable") %>%  
+  rename("r2" = ".") %>%  
+  left_join(
+    (envfit_object$vectors$pvals %>% 
+  as.data.frame() %>% 
+  rownames_to_column("Variable") %>%  
+  rename("p" = "."))) %>% 
+  rbind(
+    (envfit_object$factors$r %>% 
+  as.data.frame() %>% 
+  rownames_to_column("Variable") %>%  
+  rename("r2" = ".") %>% 
+  rows_update(., tibble(Variable = "Sepsis", r2 = 0.1)) %>% # changed to 0.1 so it fits on the plot if we create limits
+  left_join(
+    envfit_object$factors$pvals %>% 
+  as.data.frame() %>% 
+  rownames_to_column("Variable") %>%  
+  rename("p" = ".")))) %>% 
+  ggplot(aes(x = r2, y = Variable, fill = p)) +
+  geom_col() +
+  scale_x_continuous(breaks = scales::pretty_breaks(n = 10), limits = c(0, 0.1)) +
+  theme(axis.line =  element_line(size = .5), panel.background = element_blank(), legend.position = c(.75,.5)) + 
+  scale_fill_continuous(type = "viridis") +
+  scale_y_discrete(labels = c("Prolonged_Membrane_Rupture" = "Prolonged membrane rupture", 
+                              "Primary_Group" = "Probiotic group",
+                              "Nursery_Discharge_Weight" = "Nursery discharge weight",
+                              "Neonatal_Antibiotics" = "Neonatal antibiotics",
+                              "Mode_of_Delivery" = "Mode of delivery",
+                              "Gestational_Age_at_Birth" = "Gestation at birth",
+                              "Feeding_Type" = "Diet",
+                              "Birth_Weight" = "Birthweight",
+                              "Antenatal_Infections" = "Antenatal infections",
+                              "Antenatal_Antibiotics" = "Antenatal antibiotics")),
+  
+major_contributors(ps2.TSS, "Primary_Group") %>% # there are a few ASVs from the same genus so we need to summarise to imporve the plot
+  filter(top.coef > 0) %>% 
+  group_by(Genus) %>% 
+  summarise("top.coef" = mean(top.coef)) %>% 
+  rbind(
+    major_contributors(ps2.TSS, "Primary_Group") %>% 
+  filter(top.coef < 0) %>% 
+  group_by(Genus) %>% 
+  summarise("top.coef" = mean(top.coef))
+  ) %>%  
+  ggplot(aes(x = top.coef, y = Genus, fill = top.coef)) +
+  geom_col() +
+  theme(axis.line =  element_line(size = .5), panel.background = element_blank()) +
+  geom_vline(xintercept = 0.0, linetype = 1, size = .5) + 
+  scale_fill_continuous(type = "viridis", name = "Coefficient") +
+  theme(axis.title.x = element_blank(), axis.text.x = element_blank()),
+  
+  ncol = 2
+) %>% 
+ggsave("envfit_&_major_contributors.png", plot = ., dpi = 1000, height = 7, width = 14)
+```
+
+
+## Plot - NMDS
+
+**REMOVE?**
+```{r, warning=F, message=F}
+bray_not_na <- phyloseq::distance(physeq = ps2.TSS, method = "bray")
+
+                            
+# CAP ordinate
+cap_ord <- ordinate(
+    physeq = ps2.TSS, 
+    method = "CAP",
+    distance = bray_not_na,
+    formula = ~ Primary_Group+ Feeding_Type+ NEC+ Sepsis+ Mode_of_Delivery+ Neonatal_Antibiotics+ Chorioamnionitis+
+          Preeclampsia+ ROP+ Batch+ Gestational_Age_at_Birth+ Prolonged_Membrane_Rupture+ Diabetes+ Birth_Weight+ 
+          Nursery_Discharge_Weight+ Antenatal_Infections+ Antenatal_Antibiotics
+)
+
+# CAP plot
+cap_plot <- plot_ordination(
+  physeq = ps2.TSS, 
+  ordination = cap_ord, 
+    color = "Primary_Group", 
+    axes = c(1,2)
+) + 
+    aes(shape = Primary_Group) + 
+    geom_point(aes(colour = Primary_Group), alpha = 0.4, size = 4) + 
+    geom_point(colour = "grey90", size = 1.5) + 
+    scale_color_manual(values = c("#a65628", "red", "#ffae19", "#4daf4a", 
+        "#1919ff", "darkorchid3", "magenta")
+    )
+
+
+# Now add the environmental variables as arrows
+arrowmat <- vegan::scores(cap_ord, display = "bp")
+
+# Add labels, make a data.frame
+arrowdf <- data.frame(labels = rownames(arrowmat), arrowmat)
+
+# Define the arrow aesthetic mapping
+arrow_map <- aes(xend = CAP1, 
+    yend = CAP2, 
+    x = 0, 
+    y = 0, 
+    shape = NULL, 
+    color = NULL, 
+    label = labels)
+
+label_map <- aes(x = 1.3 * CAP1, 
+    y = 1.3 * CAP2, 
+    shape = NULL, 
+    color = NULL, 
+    label = labels)
+
+arrowhead = arrow(length = unit(0.02, "npc"))
+
+# Make a new graphic
+cap_plot + 
+  geom_segment(
+    mapping = arrow_map, 
+    size = .5, 
+    data = arrowdf, 
+    color = "gray", 
+    arrow = arrowhead
+  ) + 
+  geom_text(
+    mapping = label_map, 
+    size = 4,  
+    data = arrowdf, 
+    show.legend = FALSE
+  )
+
+
+rm(arrowmat)
+rm(arrowdf)
+rm(label_map)
+rm(cca_litdir)
+rm(p0)
 ```
 
 # Mixed effects modelling with glms for alpha diversity
@@ -1381,13 +1651,29 @@ glm_data <- ps_metadata %>%
 
 ## Fit Model
 
+As we have a continuous non-negative dependent, but not linear then Gamma might be best. However, we can try a few and use both the gof, R2 and AIC to compare the models.
+
 **Change fixed and random effects.**
 ```{r, warning=F, message=F, results='hide'}
 global <- lme4::glmer(Shannon ~ Feeding_Type + Sepsis + Mode_of_Delivery + Preeclampsia + ROP + Primary_Group + Batch + (1|URN), data = glm_data) 
+
+global <- lme4::glmer(Shannon ~ Feeding_Type + Sepsis + Mode_of_Delivery + Preeclampsia + ROP + Primary_Group + Batch + (1|URN), data = (glm_data %>% filter(Shannon > 0)), family = Gamma(link = "log"))
+
+global <- lme4::glmer(Shannon ~ Primary_Group + Feeding_Type + NEC + Sepsis + Mode_of_Delivery + Neonatal_Antibiotics + Chorioamnionitis +
+          Preeclampsia + ROP + Batch + Prolonged_Membrane_Rupture + Diabetes + 
+          Nursery_Discharge_Weight + Antenatal_Infections + Antenatal_Antibiotics + (1|URN), data = glm_data %>% filter(Shannon > 0), family = Gamma(link = "log")) 
 ```
 
+### Calculate the goodness of fit and R2.
 
+ - Calculate this again post bakwards selection.
+ 
+```{r, eval=F}
+gof(global)
+r.squaredGLMM(global)
+```
 
+**The gamma model with all non-covariate variables is the best model.**
 ### If convergence issues arise, use [allFit](https://www.rdocumentation.org/packages/lme4/versions/1.1-26/topics/allFit) to see why.
 
  - If they all work then any non-convergence warning is a false positive.
@@ -1399,15 +1685,6 @@ glmer_refit <- lme4::glmer(Shannon ~ Primary_Group + Feedin_Type + (1|URN), data
   summary()
 
 glmer_refit$which.OK # which optimisers work
-```
-
-### Calculate the goodness of fit and R2.
-
- - Calculate this again post bakwards selection.
- 
-```{r, eval=F}
-gof(global)
-r.squaredGLMM(global)
 ```
 
 ## Backwards Selection.
@@ -1447,7 +1724,11 @@ sjPlot::plot_model(global2, vline.color = "red", sort.est = TRUE, title = "GLM f
 ```
 
 ```{r}
-sjPlot::plot_model(global2, vline.color = "red", sort.est = TRUE, title = "GLM for Shannon diversity", type="pred") 
+sjPlot::plot_model(global2, vline.color = "red", 
+                   sort.est = TRUE, type="pred", 
+                   terms = "Primary_Group", title = "",
+                   axis.title = c("Probiotic-treatment", "Alpha Diversity")) +
+  font_size(axis_title.x = 30, axis_title.y = 30, labels.x = 30, labels.y = 30) 
 ```
 
 ```{r}
@@ -1492,9 +1773,9 @@ qqnorm(resid(global2))
 
 **Change fixed effects.**
 ```{r, message=F, warning=F}
-lme4::glmer(Shannon ~ Primary_Group + Feedin_Type + (1|URN), data = glm_data) %>% 
-  summary()
+
 ```
+
 
 **FINISIHED** 
 
