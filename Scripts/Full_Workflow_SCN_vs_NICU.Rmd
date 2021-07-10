@@ -1415,9 +1415,63 @@ envdat.phy <- ps2.TSS %>%
 envfit_object <- envfit(ordination_distance, envdat.phy, permutations = 10000) 
 ```
 
+### Only variables previously found to have  significant association 
+
+**Most logfical model.**
+
+```{r}
+ordination_distance <- ordinate(
+    physeq = ps2.TSS, 
+    method = "NMDS",
+    distance = "bray",
+    formula = ~ Primary_Group + Feeding_Type + NEC + Sepsis + Mode_of_Delivery + Neonatal_Antibiotics + Chorioamnionitis +
+          Preeclampsia + ROP + Batch + Gestational_Age_at_Birth + Diabetes + Antenatal_Antibiotics)
+
+envdat.phy <- ps2.TSS %>% 
+  sample_data() %>%
+  unclass() %>% 
+  as.data.frame() %>% 
+  select(Primary_Group, Feeding_Type, NEC, Sepsis, Mode_of_Delivery, Neonatal_Antibiotics, Chorioamnionitis,
+          Preeclampsia, ROP, Batch, Gestational_Age_at_Birth, Diabetes, Antenatal_Antibiotics) %>% 
+  centre_and_scale()
+
+set.seed(1)
+envfit_object <- envfit(ordination_distance, envdat.phy, permutations = 10000) 
+``` 
+
+## Adjust p values
+
+```{r}
+p.adjust.envfit <- function (x, method = 'bonferroni', n){
+  x.new <- x
+  if (!is.null (x$vectors)) pval.vectors <- x$vectors$pvals else pval.vectors <- NULL
+  if (!is.null (x$factors)) pval.factors <- x$factors$pvals else pval.factors <- NULL
+  if (missing (n)) n <- length (pval.vectors) + length (pval.factors)
+  if (!is.null (x$vectors)) x.new$vectors$pvals <- p.adjust (x$vectors$pvals, method = method, n = n)
+  if (!is.null (x$factors)) x.new$factors$pvals <- p.adjust (x$factors$pvals, method = method, n = n)
+  cat ('Adjustment of significance by', method, 'method')
+  return (x.new)
+}
+
+set.seed(1)
+
+envfit_object <- envfit(ordination_distance, envdat.phy, permutations = 10000) %>% 
+  p.adjust.envfit(., method = "BH")
+```
+
 ## Plot - column
 
 ```{r}
+envfit_object$vectors$r %>% 
+  as.data.frame() %>% 
+  rownames_to_column("Variable") %>%  
+  rename("r2" = ".") %>%  
+  left_join(
+    (envfit_object$vectors$pvals %>% 
+  as.data.frame() %>% 
+  add_column(Variable = "Gestational_Age_at_Birth") %>% 
+  rename("p" = "."))) %>% 
+  rbind(
 envfit_object$factors$r %>% 
   as.data.frame() %>% 
   rownames_to_column("Variable") %>%  
@@ -1427,7 +1481,8 @@ envfit_object$factors$r %>%
     envfit_object$factors$pvals %>% 
   as.data.frame() %>% 
   rownames_to_column("Variable") %>%  
-  rename("p" = ".")) %>% 
+  rename("p" = "."))
+  ) %>% 
   ggplot(aes(x = r2, y = Variable, fill = p)) +
   geom_col() +
   scale_x_continuous(breaks = scales::pretty_breaks(n = 10), limits = c(0, 0.1)) +
@@ -1438,9 +1493,11 @@ envfit_object$factors$r %>%
                               "Mode_of_Delivery" = "Mode of delivery",
                               "Feeding_Type" = "Diet",
                               "Birth_Weight" = "Birthweight",
-                              "Antenatal_Infections" = "Antenatal infections",
+                              "Gestational_Age_at_Birth" = "Gestation at birth",
                               "Antenatal_Antibiotics" = "Antenatal antibiotics"))
-  
+
+# ggsave("envfit.png", dpi = 1000, height = 5, width = 7)
+
 ```
 
 ## Calculate major contributors
@@ -1450,9 +1507,8 @@ major_contributors <- function(ps2.TSS, variable){
 # perform permanova  
 ps_otu <- data.frame(otu_table(ps2.TSS))
 ps_metadata <- data.frame(sample_data(ps2.TSS))
-permanova <- adonis(ps_otu ~Primary_Group + Batch + Feeding_Type + NEC + Sepsis + 
-                      Mode_of_Delivery +  Neonatal_Antibiotics + Chorioamnionitis + 
-                      Preeclampsia + ROP + Primary_Group, data = ps_metadata, method = "bray")  
+permanova <- adonis(ps_otu ~Primary_Group + Feeding_Type + NEC + Sepsis + Mode_of_Delivery + Neonatal_Antibiotics + Chorioamnionitis +
+          Preeclampsia + ROP + Batch + Gestational_Age_at_Birth + Diabetes + Antenatal_Antibiotics, data = ps_metadata, method = "bray")  
 
 # coefficients
 coef <- coefficients(permanova)[paste0(variable, "1"),]
@@ -1486,7 +1542,7 @@ major_contributors(ps2.TSS, "Primary_Group") %>% # there are a few ASVs from the
   theme(axis.line =  element_line(size = .5), panel.background = element_blank()) +
   geom_vline(xintercept = 0.0, linetype = 1, size = .5) + 
   scale_fill_continuous(type = "viridis", name = "Coefficient") +
-  theme(axis.title.x = element_blank(), axis.text.x = element_blank())
+  theme(axis.title.x = element_blank())
 ```
 
 ```{r}
@@ -1498,7 +1554,7 @@ grid.arrange(
   left_join(
     (envfit_object$vectors$pvals %>% 
   as.data.frame() %>% 
-  rownames_to_column("Variable") %>%  
+  add_column(Variable = "Gestational_Age_at_Birth") %>%  
   rename("p" = "."))) %>% 
   rbind(
     (envfit_object$factors$r %>% 
@@ -1516,15 +1572,11 @@ grid.arrange(
   scale_x_continuous(breaks = scales::pretty_breaks(n = 10), limits = c(0, 0.1)) +
   theme(axis.line =  element_line(size = .5), panel.background = element_blank(), legend.position = c(.75,.5)) + 
   scale_fill_continuous(type = "viridis") +
-  scale_y_discrete(labels = c("Prolonged_Membrane_Rupture" = "Prolonged membrane rupture", 
-                              "Primary_Group" = "Probiotic group",
-                              "Nursery_Discharge_Weight" = "Nursery discharge weight",
+  scale_y_discrete(labels = c("Primary_Group" = "Probiotic group",
                               "Neonatal_Antibiotics" = "Neonatal antibiotics",
                               "Mode_of_Delivery" = "Mode of delivery",
                               "Gestational_Age_at_Birth" = "Gestation at birth",
                               "Feeding_Type" = "Diet",
-                              "Birth_Weight" = "Birthweight",
-                              "Antenatal_Infections" = "Antenatal infections",
                               "Antenatal_Antibiotics" = "Antenatal antibiotics")),
   
 major_contributors(ps2.TSS, "Primary_Group") %>% # there are a few ASVs from the same genus so we need to summarise to imporve the plot
@@ -1545,8 +1597,8 @@ major_contributors(ps2.TSS, "Primary_Group") %>% # there are a few ASVs from the
   theme(axis.title.x = element_blank(), axis.text.x = element_blank()),
   
   ncol = 2
-) %>% 
-ggsave("envfit_&_major_contributors.png", plot = ., dpi = 1000, height = 7, width = 14)
+) 
+
 ```
 
 
