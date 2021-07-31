@@ -740,18 +740,6 @@ plot_richness(ps2, measures = c("Shannon", "Observed"),
           panel.border = element_rect(colour = "grey", fill = NA, size = 1))
 ```
 
- - Use `plot_richness()` to create boxplots of alpha diversity.
- - To add a layer with p values use `stat_compare_means(comparisons = list(c("Admission", "Discharge")), method = "wilcox.test")`.
-
-```{r, warning=F, message=F, fig.cap="Boxplots of richness and shannon diversity metrics coloured by date."}
-plot_richness(ps2, measures = c("Shannon", "Observed"), 
-              x = "Primary_Group", color = "Primary_Group", title = "") +
-              geom_jitter(size = 1, alpha = 0.7) +
-              geom_boxplot() +
-              theme(panel.border = element_rect(colour = "grey", fill = NA, size = 1), 
-              axis.text.x = element_blank(), axis.ticks = element_blank()) 
-```
-
  - shannon diversity for continuous variable.
 
 ```{r}
