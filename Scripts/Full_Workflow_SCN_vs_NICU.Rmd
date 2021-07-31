@@ -395,7 +395,7 @@ ps <- phyloseq(otu_table(seqtab.combined, taxa_are_rows=FALSE),
 ```{r, warning=F, message=F, results='hide'}
 sample_data(ps) <- sample_data(ps) %>%
   unclass() %>%
-  as.data.frame() %>%
+  as.data.frame() %>% 
   mutate_if(is.character, as.factor) %>%
   mutate("Sample" = ID) %>% # need to redo the rownames to save it back into the original ps object
   column_to_rownames("Sample") 
@@ -601,6 +601,15 @@ plot_bar(ps, fill = taxonomy) +
 }
 
 plot_bar_auto(ps.top20, "Genus")
+
+ps4 %>% 
+  subset_samples(Feeding_Type == "Formula") %>% 
+  subset_taxa(Genus == "Bifidobacterium") %>% 
+  plot_bar_auto(., "Genus")
+
+ps4 %>% 
+  subset_taxa(Genus == "Bifidobacterium") %>% 
+  plot_bar_auto(., "Genus")
 ```
 
 ### Calculate the number samples containing a given taxa by creating a `samples_with_taxa()` function.
@@ -626,7 +635,21 @@ samples_with_taxa <- function(ps_object, taxonomy_level, taxa){
         nrow()
 }
 
-samples_with_taxa(ps4, "Genus", "Bifidobacterium")
+ps4 %>% 
+  subset_samples(Primary_Group == "NICU") %>% 
+samples_with_taxa(., "Genus", "Bifidobacterium")
+
+ps4 %>% 
+  subset_samples(Primary_Group == "SCN") %>% 
+samples_with_taxa(., "Genus", "Bifidobacterium")
+
+ps4 %>% 
+  subset_samples(Primary_Group == "NICU") %>% 
+samples_with_taxa(., "Genus", "Lactobacillus")
+
+ps4 %>% 
+  subset_samples(Primary_Group == "SCN") %>% 
+samples_with_taxa(., "Genus", "Lactobacillus")
 ```
 
 ## Beta diversity
@@ -1196,6 +1219,7 @@ deseq_model %>%
   rbind(deseq_model %>% get_deseq_res_cat("Feeding_Type", "Formula", "Breastmilk") %>% remove_rownames()) %>% 
   rbind(deseq_model %>% get_deseq_res_cat("NEC", "Yes", "No") %>% remove_rownames()) %>% 
   rbind(deseq_model %>% get_deseq_res_cat("Sepsis", "Yes", "No") %>% remove_rownames()) %>% 
+   rbind(deseq_model %>% get_deseq_res_cat("Mode_of_Delivery", "Vaginal", "Cesarean") %>% remove_rownames()) %>% 
   rbind(deseq_model %>% get_deseq_res_cat("Diabetes", "Yes", "No") %>% remove_rownames()) %>% 
   rbind(deseq_model %>% get_deseq_res_cat("Neonatal_Antibiotics", "Yes", "No") %>% remove_rownames()) %>% 
   rbind(deseq_model %>% get_deseq_res_cat("Preeclampsia", "Yes", "No") %>% remove_rownames()) %>% 
@@ -1329,7 +1353,6 @@ anova()
 
 ### All variables
 ```{r}
-
 # CREATE FUNCTION 
 ordination_distance <- ordinate(
     physeq = ps2.TSS, 
@@ -1345,12 +1368,9 @@ ordination_distance <- ordinate(
   as.data.frame() %>% 
   select(Primary_Group, Feeding_Type, NEC, Sepsis, Mode_of_Delivery, Neonatal_Antibiotics, Chorioamnionitis,
           Preeclampsia, ROP, Batch, Gestational_Age_at_Birth, Prolonged_Membrane_Rupture, Diabetes, Birth_Weight, 
-          Nursery_Discharge_Weight, Antenatal_Infections, Antenatal_Antibiotics) %>% 
-  centre_and_scale()
+          Nursery_Discharge_Weight, Antenatal_Infections, Antenatal_Antibiotics) 
 
-envfit_object <- envfit(ordination_distance, envdat.phy, permutations = 10000) 
-
-rm()
+envfit_object <- envfit(ordination_distance, envdat.phy, permutations = 10000, na.rm = T) 
 ```
 
 ### Plot - column
@@ -1436,6 +1456,7 @@ envdat.phy <- ps2.TSS %>%
   centre_and_scale()
 
 set.seed(1)
+
 envfit_object <- envfit(ordination_distance, envdat.phy, permutations = 10000) 
 ``` 
 
@@ -1778,7 +1799,7 @@ sjPlot::plot_model(global2, vline.color = "red", sort.est = TRUE, title = "GLM f
 ```{r}
 sjPlot::plot_model(global2, vline.color = "red", 
                    sort.est = TRUE, type="pred", 
-                   terms = "Primary_Group", title = "",
+                   terms = "Primary_Group", title = "", colors = "v",
                    axis.title = c("Probiotic-treatment", "Alpha Diversity")) +
   font_size(axis_title.x = 30, axis_title.y = 30, labels.x = 30, labels.y = 30) 
 ```
