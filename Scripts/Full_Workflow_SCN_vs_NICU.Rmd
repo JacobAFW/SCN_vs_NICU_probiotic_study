@@ -1157,8 +1157,6 @@ sample_data(ps3) %>%
   corvif()
 ```
 
-Maybes: Antenatal_Infections, Antenatal_Antibiotics,
-
 ## DESeq2
 
  - Convert from *phyloseq* to *deseq* object.
@@ -1180,7 +1178,6 @@ phyloseq_to_deseq2(ps3, ~ Feeding_Type + NEC + Sepsis + Mode_of_Delivery +
 ```
           
 ### Wald
-
 
 ```{r, warning=F,message=F}
 # function for Walds test and categorical variables
@@ -1205,7 +1202,6 @@ phyloseq_to_deseq2(ps3, ~ Primary_Group + Feeding_Type + NEC + Sepsis + Mode_of_
           remove_rownames()
 ```
 
-**DECIDE IN WHICH MODEL TO USE - out of the 2 chunks below.**
 ```{r, warning=F, message=F}
 deseq_model <- phyloseq_to_deseq2(ps3, ~ Primary_Group + Feeding_Type + NEC + Sepsis + Mode_of_Delivery + Neonatal_Antibiotics + Chorioamnionitis +
           Preeclampsia + ROP + Batch + Diabetes + Antenatal_Antibiotics) %>% 

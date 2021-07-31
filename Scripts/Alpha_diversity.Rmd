@@ -1,0 +1,199 @@
+---
+title: "Generalised linear mixed effects modelling"
+output: pdf_document
+author: "Jacob Westaway"
+date: "Last updated on `r Sys.Date()`"
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+knitr::opts_knit$set(root.dir = 'C:/Users/Jacob/Desktop/Jacob_Uni/Data/SCN_vs_NICU_probiotic_study')
+load(file = "Rmd.RData")
+```
+
+# About
+
+To examine the effect of probiotic-treatment on Shannon diversity, a generalised linear mixed effects regression model was created using lme4. Shannon diversity was calculated at the ASV level (normalised through TSS), and continuous predictors were scaled and centered. Multicollinearity was assessed with the AED package, and collinear variables were removed. To control for high inter-individual variation in the preterm infant microbiome, the infants identification was included as a random factor. 
+
+After creation of the initial model with [lme4](https://cran.r-project.org/web/packages/lme4/vignettes/lmer.pdf), backwards selection was used to find the least complex, yet adequate, model by comparing Akaike’s Information Criterion (AIC) scores and removing predictors that did not contribute to variation in the model. A post-hoc pairwise Tukey comparison (correcting for multiple comparisons) was used to assess the effect of probiotic-treatment on alpha diveristy using the emmeans package. 
+
+The code to create the data objects used in this workflow can be found in the ['Pipeline.Rmd'](https://github.com/JacobAFW/SCN_vs_NICU_probiotic_study).
+
+## Packages
+
+```{r,warning=F,message=F,results='hide'}
+sapply(c("phyloseq", "tidyverse", "knitr", "lme4", "emmeans", "MuMIn", "aods3", "sjPlot"), 
+        require, character.only = TRUE)
+```
+
+# Calculate alpha diversity
+
+```{r, warning=F, message=F, eval=F}
+# define calc_alpha_diversity function
+calc_alpha_diversity <- function(ps2){
+# calculate metrics
+ps_alpha_div <- ps2 %>%
+                estimate_richness(measures = c("Shannon", "Observed", "Chao1")) %>% 
+                select(-se.chao1)
+
+# creat ID column based on rownames
+ps_alpha_div <- rownames_to_column(ps_alpha_div, var = "ID") %>% 
+                mutate(ID = as.factor(gsub("X", "", ID)))
+
+# join alpha metrics with metadata by the ID column
+Metadata %>%
+  filter(Type == "Discharge") %>% 
+  right_join(ps_alpha_div, by = "ID") %>%
+  as.data.frame() 
+}
+
+ps_metadata <- calc_alpha_diversity(ps2) 
+```
+
+# Centre and scale data
+
+```{r, warning=F, message=F, eval=F}
+# define centre and scale function
+centre_and_scale <- function(data){
+# get numeric variables
+data2 <- data %>% 
+  select_if(is.numeric)
+# entering and scaling over variables
+data3 <- sapply(data2, function(x) scale(x, center=T, scale = 2*sd(x))) %>% 
+  as.data.frame() %>% 
+  rownames_to_column("RowID")
+# join scaled/centred data to non-numeric data
+data %>% 
+  select_if(negate(is.numeric)) %>%
+  rownames_to_column("RowID") %>% 
+  left_join(data3, by = "RowID") %>%
+  select(-RowID)
+}
+
+glm_data <- ps_metadata %>% 
+  mutate(Shannon = as.factor(Shannon)) %>% 
+  centre_and_scale() %>% 
+  mutate(Shannon = as.character(Shannon)) %>% 
+  mutate(Shannon = as.numeric(Shannon))
+```
+
+# Test for collinearity using known microbiome-covariates
+
+```{r,warning=F,message=F,eval=F}
+# defin myvif function
+myvif <- function(mod) {
+  v <- vcov(mod)
+  assign <- attributes(model.matrix(mod))$assign
+  if (names(coefficients(mod)[1]) == "(Intercept)") {
+    v <- v[-1, -1]
+    assign <- assign[-1]
+  } else warning("No intercept: vifs may not be sensible.")
+  terms <- labels(terms(mod))
+  n.terms <- length(terms)
+  if (n.terms < 2) stop("The model contains fewer than 2 terms")
+  if (length(assign) > dim(v)[1] ) {
+    diag(tmp_cor)<-0
+    if (any(tmp_cor==1.0)){
+      return("Sample size is too small, 100% collinearity is present")
+    } else {
+      return("Sample size is too small")
+    }
+  }
+  R <- cov2cor(v)
+  detR <- det(R)
+  result <- matrix(0, n.terms, 3)
+  rownames(result) <- terms
+  colnames(result) <- c("GVIF", "Df", "GVIF^(1/2Df)")
+  for (term in 1:n.terms) {
+    subs <- which(assign == term)
+    result[term, 1] <- det(as.matrix(R[subs, subs])) * det(as.matrix(R[-subs, -subs]))/detR
+    result[term, 2] <- length(subs)
+  }
+  if (all(result[, 2] == 1)) {
+    result <- data.frame(GVIF=result[, 1])
+  } else {
+    result[, 3] <- result[, 1]^(1/(2 * result[, 2]))
+  }
+  invisible(result)
+}
+
+# corvif
+corvif <- function(data) {
+  data <- as.data.frame(data)
+
+  form    <- formula(paste("fooy ~ ",paste(strsplit(names(data)," "),collapse = " + ")))
+  data  <- data.frame(fooy = 1 + rnorm(nrow(data)) ,data)
+  lm_mod  <- lm(form,data) # runs linear model with above formula and metadata
+  
+  cat("\n\nVariance inflation factors\n\n")
+  print(myvif(lm_mod))
+}
+
+glm_data %>% 
+  select(Primary_Group, Feeding_Type, NEC, Sepsis, Mode_of_Delivery, 
+         Neonatal_Antibiotics, Chorioamnionitis, Preeclampsia, ROP, 
+         Batch, Diabetes ,Antenatal_Antibiotics) %>% 
+  corvif()
+```
+
+
+# Fit Model
+
+```{r,warning=F,message=F}
+global <- lme4::glmer(Shannon ~ Primary_Group + Feeding_Type + NEC + Sepsis + 
+                        Mode_of_Delivery + Neonatal_Antibiotics + Chorioamnionitis + 
+                        Preeclampsia + ROP + Batch + Diabetes + Antenatal_Antibiotics + 
+                        (1|URN), data = (glm_data %>% filter(Shannon > 0)), 
+                        family = Gamma(link = "log")) 
+global
+```
+
+```{r,warning=F,message=F,eval=F}
+gof(global)
+r.squaredGLMM(global)
+```
+
+
+# Backwards Selection
+
+```{r, warning=F, message=F}
+dfun <- function(x) {
+  x$AIC <- x$AIC-min(x$AIC)
+  names(x)[2] <- "dAIC"
+  x
+}
+
+dfun(drop1(global))
+
+global2 <- lme4::glmer(Shannon ~ Primary_Group +  Chorioamnionitis +
+          Preeclampsia + Batch + (1|URN), 
+          data = (glm_data %>% filter(Shannon > 0)), family = Gamma(link = "log"))  
+  
+dfun(drop1(global2))
+```
+
+# Calculate the statistical pairwise/adjusted significance
+
+```{r,warning=F,message=F}
+emmeans(global2, list(pairwise ~ Primary_Group), adjust = "tukey") %>% 
+  pairs() %>% 
+  as.data.frame() 
+```
+
+# Calculate the goodness of fit and R2.
+
+```{r,warning=F,message=F}
+gof(global2)
+r.squaredGLMM(global2)
+```
+
+# Plot
+
+```{r,warning=F,message=F,fig.cap="Dot and whisker plot of the estimates for probiotic-treatment generlaised linear mixed effects model results (NICU = probiotic-treated, SCN = Non-treated)"}
+plot_model(global2, vline.color = "red", 
+                   sort.est = TRUE, type="pred", 
+                   terms = "Primary_Group", title = "", colors = "v",
+                   axis.title = c("Probiotic-treatment", "Alpha Diversity")) +
+  font_size(axis_title.x = 30, axis_title.y = 30, labels.x = 30, labels.y = 30) 
+```
+
